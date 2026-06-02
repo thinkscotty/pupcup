@@ -16,9 +16,10 @@ import (
 )
 
 // New constructs a hardware-backed Driver. Pins are BCM GPIO numbers; each
-// pin is configured input pull-up with falling-edge detection. Debounce is
-// applied per-pin (events within `debounce` of the previous on the same pin
-// are dropped).
+// pin is configured input pull-up with both-edge detection. Debounce is
+// applied per-pin (edges within `debounce` of the previous on the same pin
+// are dropped). Active-low: a confirmed Low after a falling edge is a press, a
+// confirmed High after a rising edge is a release.
 func New(pins Pins, debounce time.Duration, log *slog.Logger) (Driver, error) {
 	if log == nil {
 		log = slog.Default()
@@ -42,7 +43,7 @@ func New(pins Pins, debounce time.Duration, log *slog.Logger) (Driver, error) {
 			d.Close()
 			return nil, fmt.Errorf("buttons: gpio pin %d not found", pin)
 		}
-		if err := p.In(gpio.PullUp, gpio.FallingEdge); err != nil {
+		if err := p.In(gpio.PullUp, gpio.BothEdges); err != nil {
 			d.Close()
 			return nil, fmt.Errorf("buttons: configure %s (gpio %d): %w", color, pin, err)
 		}
@@ -74,7 +75,10 @@ func (d *linuxDriver) Close() error {
 
 func (d *linuxDriver) watch(color domain.ButtonColor, p gpio.PinIO) {
 	defer d.wg.Done()
-	var last time.Time
+	var (
+		last    time.Time
+		lastLvl = gpio.High // released at rest (active-low, internal pull-up)
+	)
 	for {
 		select {
 		case <-d.stop:
@@ -89,13 +93,20 @@ func (d *linuxDriver) watch(color domain.ButtonColor, p gpio.PinIO) {
 		if !last.IsZero() && now.Sub(last) < d.debounce {
 			continue
 		}
-		// Confirm still low (true press, not bounce noise).
-		if p.Read() != gpio.Low {
+		// Re-read to settle bounce and classify the edge. Active-low: Low is a
+		// press, High a release. Drop edges that didn't change the level.
+		lvl := p.Read()
+		if lvl == lastLvl {
 			continue
 		}
+		lastLvl = lvl
 		last = now
+		action := ActionRelease
+		if lvl == gpio.Low {
+			action = ActionPress
+		}
 		select {
-		case d.out <- ButtonEvent{Color: color, TS: now}:
+		case d.out <- ButtonEvent{Color: color, Action: action, TS: now}:
 		case <-d.stop:
 			return
 		}

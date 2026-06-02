@@ -1,0 +1,38 @@
+[Unit]
+Description=PupCup feeding tracker
+Documentation=https://github.com/thinkscotty/pupcup
+After=network-online.target avahi-daemon.service time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=pupcup
+Group=pupcup
+# Hardware access: /dev/gpiochip0 (gpio), /dev/i2c-1 (i2c), /dev/spidev0.0 (spi).
+SupplementaryGroups=gpio i2c spi
+ExecStart=/opt/pupcup/pupcup --config /etc/pupcup/config.yaml
+Restart=on-failure
+RestartSec=5
+
+# Type=notify: the daemon signals READY via sd_notify and pings the watchdog.
+WatchdogSec=60
+
+# StateDirectory creates/owns /var/lib/pupcup (db + photos); RuntimeDirectory
+# gives a private /run/pupcup. Both are created with the service user's perms.
+StateDirectory=pupcup
+RuntimeDirectory=pupcup
+
+# Hardening. ProtectSystem=strict makes the FS read-only except ReadWritePaths;
+# /dev stays visible (no PrivateDevices) so the GPIO/I2C/SPI nodes are reachable.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/pupcup /etc/pupcup
+
+# Binding :80 as a non-root user needs CAP_NET_BIND_SERVICE; nothing else.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+# PupCup configuration — installed to /etc/pupcup/config.yaml by bootstrap.sh.
+#
+# Every value below is the built-in default (see internal/config Default());
+# this file documents them and is the place to make per-device changes. Any
+# field may also be overridden at runtime by a PUPCUP_<UPPER_SNAKE> env var
+# (e.g. PUPCUP_LISTEN, PUPCUP_BUTTON_PINS_GREEN) — env wins over this file.
+# The config is validated at startup and the daemon fails fast on a bad value.
+
+# --- Network / storage -------------------------------------------------------
+listen: ":80"                              # HTTP bind address (needs CAP_NET_BIND_SERVICE for :80)
+db_path: "/var/lib/pupcup/pupcup.sqlite"   # SQLite file (WAL); StateDirectory in the unit
+photo_dir: "/var/lib/pupcup/photos"        # uploaded dog photos
+timezone: "America/New_York"               # IANA tz; drives the household-local day
+
+# --- Hardware (BCM/GPIO numbers; see pupcup_hardware_build.md §3) -------------
+spi_device: "/dev/spidev0.0"               # SK6812 NeoPixel, via 74AHCT125 level shifter
+i2c_bus: 1                                 # OLED + DS1307 share bus 1
+oled_addr: 0x3C                            # SSD1306 128x64
+neopixel_count: 8                          # SK6812 stick length
+
+button_pins:
+  green: 21
+  yellow: 16
+  red: 12
+  blue: 20                                 # snack / add-in chord
+
+rotary_pins:
+  clk: 17
+  dt: 27
+  sw: 22                                   # long-press clears the post-meal lock
+
+button_debounce_ms: 25
+rotary_debounce_ms: 5                      # retained for compat; the Buxton decoder ignores it
+long_press_ms: 1500                        # rotary-SW unlock & Blue-in-locked snack threshold
+
+# --- Behavior ----------------------------------------------------------------
+meal_lock_minutes: 240                     # post-meal lock, timed from the last meal
+meal_complete_grace_minutes: 15            # wait for the remaining dogs before a partial lock (0 = lock at once)
+snack_mode_idle_seconds: 60                # snack-mode walk-away timeout
+addin_idle_seconds: 30                     # add-in picker walk-away → commit the meal untagged
+default_feed_kind: "standard"              # standard | nonstandard
+mdns_hostname: "pupcup"                    # advertised as <name>.local
+
+# --- Web / photo uploads -----------------------------------------------------
+photo_max_kb: 150                          # reject larger uploads
+photo_max_px: 320                          # reject images wider/taller than this

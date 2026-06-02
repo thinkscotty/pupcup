@@ -1,0 +1,63 @@
+{{define "title"}}PupCup &mdash; Add-ins{{end}}
+{{define "content"}}
+
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}">{{.Flash.Msg}}</div>{{end}}
+
+<section class="card">
+  <h1>Add-in catalog</h1>
+  <p class="muted">Add-ins are the extras mixed into a meal &mdash; shredded chicken, cheese,
+    a splash of wet food. Tag a meal on the <a href="/feedings">feedings</a> page to
+    track what helps a picky eater.</p>
+  <form class="tag-add-form" method="post" action="/tags">
+    <label class="field field-wide"><span>New add-in</span>
+      <input type="text" name="name" maxlength="40" required autocomplete="off"
+             placeholder="e.g. Bone Broth"></label>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Add</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Your add-ins</h2>
+  {{if .Live}}
+  <ul class="tag-manage-list">
+    {{range .Live}}
+    <li class="tag-manage">
+      <span class="tag-chip{{if .IsUnspecified}} tag-chip-unspecified{{end}}">{{.Name}}</span>
+      {{if .IsUnspecified}}
+      <span class="muted">Reserved &mdash; the device "Other (name later)" choice. Can't be edited.</span>
+      {{else}}
+      <details class="tag-edit">
+        <summary class="btn btn-ghost btn-sm">Edit</summary>
+        <form class="tag-rename-form" method="post" action="/tags/{{.ID}}">
+          <input type="hidden" name="_method" value="PATCH">
+          <label class="field"><span>Rename</span>
+            <input type="text" name="name" maxlength="40" required value="{{.Name}}" autocomplete="off"></label>
+          <div class="form-actions"><button type="submit" class="btn btn-primary btn-sm">Save</button></div>
+        </form>
+        <form class="tag-archive-form" method="post" action="/tags/{{.ID}}"
+              onsubmit="return confirm('Archive {{.Name}}? It stays on past feedings but is hidden from pickers.')">
+          <input type="hidden" name="_method" value="DELETE">
+          <button type="submit" class="btn btn-danger btn-sm">Archive</button>
+        </form>
+      </details>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="muted">No add-ins yet. Add one above.</p>
+  {{end}}
+</section>
+
+{{if .Archived}}
+<section class="card">
+  <h2 class="muted">Archived</h2>
+  <p class="muted">Hidden from pickers, but kept on the feedings they were already on.</p>
+  <ul class="tag-manage-list">
+    {{range .Archived}}
+    <li class="tag-manage"><span class="tag-chip tag-chip-archived">{{.Name}}</span></li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+{{end}}

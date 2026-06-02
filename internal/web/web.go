@@ -122,6 +122,11 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /feedings/{id}/edit", s.handleFeedingEditForm)
 	mux.HandleFunc("PATCH /feedings/{id}", s.handleFeedingUpdate)
 	mux.HandleFunc("DELETE /feedings/{id}", s.handleFeedingDelete)
+	// Add-in tag chips (milestone 10.5): attach creates-on-the-fly and clears
+	// the Unspecified sentinel; detach removes one. Both return the refreshed
+	// chip-area fragment (HTMX issues the real verbs directly).
+	mux.HandleFunc("POST /feedings/{id}/tags", s.handleFeedingTagAttach)
+	mux.HandleFunc("DELETE /feedings/{id}/tags/{tagID}", s.handleFeedingTagDetach)
 
 	mux.HandleFunc("POST /snacks", s.handleSnackCreate)
 	mux.HandleFunc("GET /snacks/{id}", s.handleSnackRow)
@@ -146,6 +151,13 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /stress/{id}", s.handleStressUpdate)
 	mux.HandleFunc("DELETE /stress/{id}", s.handleStressDelete)
 
+	// Add-in tag catalog (milestone 10.5) — PRG + methodOverride like /dogs, so
+	// it works without JavaScript. DELETE archives (soft; history preserved).
+	mux.HandleFunc("GET /tags", s.handleTagsIndex)
+	mux.HandleFunc("POST /tags", s.handleTagCreate)
+	mux.HandleFunc("PATCH /tags/{id}", s.handleTagUpdate)
+	mux.HandleFunc("DELETE /tags/{id}", s.handleTagDelete)
+
 	// History — read-only unified timeline (milestone 12), filterable by dog /
 	// type / date range via plain GET query params (works without JavaScript).
 	mux.HandleFunc("GET /history", s.handleHistory)
@@ -168,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 type baseData struct {
 	Version string
 	Host    string
-	// Nav marks the active top-nav item ("dashboard" | "feedings" | "illness" |
+	// Nav marks the active top-nav item ("dashboard" | "feedings" | "tags" | "illness" |
 	// "stress" | "history" | "dogs").
 	Nav string
 }

@@ -99,7 +99,20 @@ type Dog struct {
 	CreatedAt   time.Time
 }
 
-// Feeding is one meal recording for a dog.
+// FeedTag is one entry in the household's add-in catalog (e.g. "Shredded
+// Chicken"). The reserved IsUnspecified sentinel is the device "Other (name
+// later)" choice; archived tags are hidden from pickers but preserved on past
+// feedings.
+type FeedTag struct {
+	ID            int64
+	Name          string
+	IsUnspecified bool
+	ArchivedAt    *time.Time
+	CreatedAt     time.Time
+}
+
+// Feeding is one meal recording for a dog. Tags are the add-ins mixed into the
+// meal; it carries zero or more.
 type Feeding struct {
 	ID        int64
 	DogID     int64
@@ -108,6 +121,7 @@ type Feeding struct {
 	Score     Score
 	Specifics string
 	Source    Source
+	Tags      []FeedTag
 	DeletedAt *time.Time
 	EditedAt  *time.Time
 	CreatedAt time.Time
@@ -227,6 +241,14 @@ func (f Feeding) Validate() error {
 	}
 	if !f.Source.Valid() {
 		return fmt.Errorf("feeding source %q invalid", f.Source)
+	}
+	return nil
+}
+
+// Validate returns an error if the tag is missing a name.
+func (t FeedTag) Validate() error {
+	if t.Name == "" {
+		return fmt.Errorf("tag name is required")
 	}
 	return nil
 }

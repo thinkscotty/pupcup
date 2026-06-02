@@ -58,6 +58,27 @@ type SnackModeScene struct {
 
 func (SnackModeScene) isScene() {}
 
+// AddInChoice is one row in the add-in picker. The final row is always the
+// synthetic "Other (name later)" entry (IsOther = true) that attaches the
+// reserved Unspecified sentinel tag.
+type AddInChoice struct {
+	TagID   int64
+	Label   string
+	IsOther bool
+}
+
+// AddInSelectScene shows the per-dog-ranked add-in picker for the pending
+// feeding, with the highlighted choice (Index) inverted. The pending dog and
+// the meal score it will commit with are shown in the header.
+type AddInSelectScene struct {
+	Dog     domain.Dog
+	Score   domain.Score
+	Choices []AddInChoice
+	Index   int
+}
+
+func (AddInSelectScene) isScene() {}
+
 // SplashScene is a centered-text scene for boot, errors, etc.
 type SplashScene struct {
 	Message string
@@ -124,6 +145,8 @@ func frame(s Scene) image.Image {
 		drawSummary(img, sc)
 	case SnackModeScene:
 		drawSnack(img, sc)
+	case AddInSelectScene:
+		drawAddInSelect(img, sc)
 	}
 	return img
 }

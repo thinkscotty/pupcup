@@ -27,11 +27,12 @@ const inputTimeLayout = "2006-01-02T15:04"
 
 type feedingsData struct {
 	baseData
-	Dogs     []dogOption
-	Entries  []entryView
-	NowInput string // default value for the add-form datetime-local picker
-	Flash    *flash
-	AnyDogs  bool
+	Dogs        []dogOption
+	Entries     []entryView
+	DogTagLists []dogTagList // per-dog ranked add-in names → type-ahead datalists
+	NowInput    string       // default value for the add-form datetime-local picker
+	Flash       *flash
+	AnyDogs     bool
 }
 
 // dogOption is a dog as an <option> in the add-form selects.
@@ -55,6 +56,9 @@ type entryView struct {
 	Specifics string
 	Edited    bool
 	Source    domain.Source
+	// TagArea carries the add-in chips + add control for meal rows; nil for
+	// snacks (which can't be tagged).
+	TagArea *feedingTags
 }
 
 // ----------------------------- feedings page --------------------------------
@@ -78,6 +82,7 @@ func (s *Server) handleFeedingsIndex(w http.ResponseWriter, r *http.Request) {
 	for _, d := range dogs {
 		data.Dogs = append(data.Dogs, dogOption{ID: d.ID, Name: d.Name, Accent: d.AccentColor})
 	}
+	data.DogTagLists = s.dogTagLists(ctx, dogs)
 	data.Entries, err = s.recentEntries(ctx)
 	if err != nil {
 		s.serverError(w, "feedings", err)
@@ -110,10 +115,11 @@ func (s *Server) recentEntries(ctx context.Context) ([]entryView, error) {
 	out := make([]entryView, 0, len(feeds)+len(snacks))
 	for _, f := range feeds {
 		d := byID[f.DogID]
+		ta := feedingTagsView(f)
 		out = append(out, entryView{
 			ID: f.ID, DogID: f.DogID, DogName: d.Name, Accent: d.AccentColor,
 			TS: f.TS, Score: f.Score, Kind: f.Kind, Specifics: f.Specifics,
-			Edited: f.EditedAt != nil, Source: f.Source,
+			Edited: f.EditedAt != nil, Source: f.Source, TagArea: &ta,
 		})
 	}
 	for _, sn := range snacks {
@@ -436,10 +442,11 @@ func (s *Server) parseInputTime(v string) (time.Time, error) {
 
 func (s *Server) feedingEntry(ctx context.Context, f domain.Feeding) entryView {
 	d, _ := s.store.GetDog(ctx, f.DogID)
+	ta := feedingTagsView(f)
 	return entryView{
 		ID: f.ID, DogID: f.DogID, DogName: d.Name, Accent: d.AccentColor,
 		TS: f.TS, Score: f.Score, Kind: f.Kind, Specifics: f.Specifics,
-		Edited: f.EditedAt != nil, Source: f.Source,
+		Edited: f.EditedAt != nil, Source: f.Source, TagArea: &ta,
 	}
 }
 

@@ -28,6 +28,7 @@ var pages = map[string]string{
 	"stress":     "templates/stress.html",
 	"history":    "templates/history.html",
 	"dog_detail": "templates/dog_detail.html",
+	"tags":       "templates/tags.html",
 	"404":        "templates/404.html",
 }
 

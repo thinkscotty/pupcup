@@ -113,6 +113,59 @@ func drawSnack(m *mono, sc SnackModeScene) {
 	}
 }
 
+// drawAddInSelect draws the add-in picker: a header with the pending dog + the
+// meal score it will commit with, then a scrolling list of choices with the
+// highlighted row marked by a caret and an outline box. The font draws "on"
+// pixels only, so the selection is shown with a frame rather than inversion.
+func drawAddInSelect(m *mono, sc AddInSelectScene) {
+	// Header: dog name (left) + score letter badge (right).
+	drawText(m, 2, 2, upper(sc.Dog.Name))
+	badge := "-"
+	switch sc.Score {
+	case "full":
+		badge = "G"
+	case "partial":
+		badge = "Y"
+	case "none":
+		badge = "R"
+	}
+	drawText(m, Width-textWidth(badge)-2, 2, badge)
+
+	if len(sc.Choices) == 0 {
+		drawText(m, 2, 28, "NO ADD-INS")
+		return
+	}
+
+	const (
+		maxRows = 4
+		rowH    = 12
+		top     = 14
+	)
+	start := 0
+	if sc.Index >= maxRows {
+		start = sc.Index - maxRows + 1
+	}
+	for row := 0; row < maxRows; row++ {
+		i := start + row
+		if i >= len(sc.Choices) {
+			break
+		}
+		y := top + row*rowH
+		selected := i == sc.Index
+		label := upper(sc.Choices[i].Label)
+		if len(label) > 18 {
+			label = label[:18]
+		}
+		if selected {
+			// Outline box around the row; caret before the label.
+			m.fillRect(0, y-2, Width-1, y-1, true) // top edge
+			m.fillRect(0, y+8, Width-1, y+9, true) // bottom edge
+			drawText(m, 2, y, ">")
+		}
+		drawText(m, 12, y, label)
+	}
+}
+
 // formatDuration formats a duration as H:MM or M:SS.
 func formatDuration(d time.Duration) string {
 	if d < 0 {

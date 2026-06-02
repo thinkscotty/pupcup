@@ -63,6 +63,12 @@
     {{if not .Entries}}<li id="entry-empty" class="entry-empty muted">Nothing recorded yet.</li>{{end}}
   </ul>
 </section>
+
+{{/* Per-dog ranked add-in suggestions; each meal row's add-in input references
+     its dog's list for type-ahead. */}}
+{{range .DogTagLists}}
+<datalist id="tags-dog-{{.DogID}}">{{range .Names}}<option value="{{.}}"></option>{{end}}</datalist>
+{{end}}
 {{end}}
 
 {{define "dog_options"}}{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
@@ -84,6 +90,7 @@
       {{if .Edited}}<span class="muted entry-edited" title="Edited after it was recorded">&middot; edited</span>{{end}}
     </div>
     {{if .Specifics}}<p class="entry-specifics muted">{{.Specifics}}</p>{{end}}
+    {{if .TagArea}}{{template "tag_area" .TagArea}}{{end}}
   </div>
   <div class="entry-actions">
     <button type="button" class="btn btn-ghost btn-sm"
@@ -95,6 +102,28 @@
             hx-confirm="Delete this {{if .IsSnack}}snack{{else}}feeding{{end}}?">Delete</button>
   </div>
 </li>
+{{end}}
+
+{{/* tag_area: the add-in chips + add control under a meal row. Its own swap
+     target (id tags-feeding-{id}); attach/detach return a fresh copy. */}}
+{{define "tag_area"}}
+<div class="tag-area" id="tags-feeding-{{.FeedingID}}">
+  <div id="tag-msg-{{.FeedingID}}" class="form-msg"></div>
+  {{if .HasUnspecified}}<span class="tag-needs-name">Needs a name</span>{{end}}
+  {{range .Tags}}
+  <span class="tag-chip{{if .IsUnspecified}} tag-chip-unspecified{{end}}">{{.Name}}<button
+        type="button" class="tag-chip-x" aria-label="Remove {{.Name}}"
+        hx-delete="/feedings/{{$.FeedingID}}/tags/{{.ID}}"
+        hx-target="#tags-feeding-{{$.FeedingID}}" hx-swap="outerHTML">&times;</button></span>
+  {{end}}
+  <form class="tag-add" hx-post="/feedings/{{.FeedingID}}/tags"
+        hx-target="#tags-feeding-{{.FeedingID}}" hx-swap="outerHTML"
+        hx-on::after-request="if(event.detail.successful)this.reset()">
+    <input type="text" name="name" list="tags-dog-{{.DogID}}" maxlength="40" autocomplete="off"
+           placeholder="{{if .HasUnspecified}}name this add-in&hellip;{{else}}+ add-in{{end}}">
+    <button type="submit" class="btn btn-ghost btn-sm">Add</button>
+  </form>
+</div>
 {{end}}
 
 {{/* new_entry: the create response — prepend the row, and drop the empty-state

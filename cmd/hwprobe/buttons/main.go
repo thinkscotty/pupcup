@@ -68,7 +68,7 @@ func main() {
 			if !ok {
 				return
 			}
-			fmt.Printf("[%s] %s\n", ev.TS.Format(time.RFC3339Nano), ev.Color)
+			fmt.Printf("[%s] %s %s\n", ev.TS.Format(time.RFC3339Nano), ev.Color, ev.Action)
 		}
 	}
 }

@@ -427,10 +427,18 @@ func (s *Store) CreateFeeding(ctx context.Context, f domain.Feeding) (domain.Fee
 	return s.GetFeeding(ctx, id)
 }
 
-// GetFeeding returns a feeding by id (including soft-deleted).
+// GetFeeding returns a feeding by id (including soft-deleted), with its add-in
+// tags populated.
 func (s *Store) GetFeeding(ctx context.Context, id int64) (domain.Feeding, error) {
 	row := s.db.QueryRowContext(ctx, feedingSelect+` WHERE id = ?`, id)
-	return scanFeeding(row)
+	f, err := scanFeeding(row)
+	if err != nil {
+		return domain.Feeding{}, err
+	}
+	if f.Tags, err = s.TagsForFeeding(ctx, f.ID); err != nil {
+		return domain.Feeding{}, err
+	}
+	return f, nil
 }
 
 const feedingSelect = `SELECT id, dog_id, ts_utc, kind, score, COALESCE(specifics,''), source, deleted_at, edited_at, created_at FROM feedings`
@@ -485,7 +493,14 @@ func (s *Store) ListFeedings(ctx context.Context, f FeedingFilter) ([]domain.Fee
 		}
 		out = append(out, fd)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.attachTagsToFeedings(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // UpdateFeeding edits ts, kind, score, specifics. Sets edited_at.

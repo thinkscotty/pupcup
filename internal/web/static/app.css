@@ -513,3 +513,64 @@ a { color: inherit; }
 .detail-table th { font-size: 0.8rem; color: rgba(58, 51, 43, 0.6); font-weight: 500; }
 .detail-table td .entry-specifics { display: block; margin-top: 0.2rem; }
 .detail-foot { margin: 0.8rem 0 0; }
+
+/* Add-in tags (milestone 10.5) — catalog page + inline meal-row chips. */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  background: var(--blue);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.tag-chip-unspecified { background: var(--yellow); }
+.tag-chip-archived { background: var(--line); color: rgba(58, 51, 43, 0.55); }
+.tag-chip-x {
+  border: 0;
+  background: rgba(58, 51, 43, 0.15);
+  color: inherit;
+  cursor: pointer;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  line-height: 1;
+  font-size: 0.9rem;
+  padding: 0;
+}
+.tag-chip-x:hover { background: rgba(58, 51, 43, 0.3); }
+
+/* Inline chip area under a meal row. */
+.tag-area {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+.tag-needs-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #9a6a1a;
+  background: var(--yellow);
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+.tag-area .form-msg:empty { display: none; }
+.tag-add { display: inline-flex; gap: 0.3rem; align-items: center; }
+.tag-add input {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.82rem;
+  min-width: 9rem;
+}
+
+/* Catalog page list. */
+.tag-add-form .field-wide { max-width: 22rem; }
+.tag-manage-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.tag-manage { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.tag-edit { display: inline; }
+.tag-edit .tag-rename-form, .tag-edit .tag-archive-form { margin-top: 0.5rem; }

@@ -43,6 +43,7 @@ const (
 	ModeIdle Mode = iota
 	ModeLockedSummary
 	ModeSnackMode
+	ModeAddInSelect
 )
 
 func (m Mode) String() string {
@@ -53,6 +54,8 @@ func (m Mode) String() string {
 		return "locked"
 	case ModeSnackMode:
 		return "snack"
+	case ModeAddInSelect:
+		return "addin"
 	}
 	return "?"
 }
@@ -97,6 +100,36 @@ type Machine struct {
 	// (locked_until = lastMealTS + meal_lock) and the meal-complete grace timer
 	// measures elapsed time from it. Zero when no meal is in progress.
 	lastMealTS time.Time
+
+	// held is the live set of currently-pressed buttons, tracked from the
+	// both-edge driver. It disambiguates the add-in chord (a meal button still
+	// held when Blue is tapped — or Blue still held when a meal is tapped) from
+	// Blue-alone (snack), and gates the deferred meal commit on release.
+	held map[domain.ButtonColor]bool
+	// pending is the in-memory, not-yet-committed feeding opened on a meal-button
+	// press in Idle (deferred commit). It commits on release (plain meal) or on
+	// an add-in selection (with the chosen tag). nil when no meal is in progress.
+	pending *pendingFeeding
+	// addInChoices / addInIndex drive the AddInSelect picker (the ranked tags
+	// plus a trailing "Other (name later)" row).
+	addInChoices []oled.AddInChoice
+	addInIndex   int
+	// bluePressedAt timestamps Blue's press while in LockedSummary, so the tick
+	// loop can detect a long-press (≥ long_press_ms) and enter SnackMode.
+	bluePressedAt time.Time
+	// blueArmed is set when Blue is pressed alone in Idle (no meal held): the
+	// gesture is a *potential* snack, confirmed on release. It is disarmed if a
+	// chord forms (a meal joins the hold) or the hold is otherwise consumed, so
+	// a snack-recording Blue tap in SnackMode doesn't re-enter snack on release.
+	blueArmed bool
+}
+
+// pendingFeeding is an in-memory meal opened on a meal-button press, awaiting
+// commit on release (plain) or after an add-in selection (tagged).
+type pendingFeeding struct {
+	dogID int64
+	dog   domain.Dog
+	score domain.Score
 }
 
 // New constructs a Machine. Pass at least Cfg, Bus, Store, Buttons, Rotary,
@@ -125,6 +158,7 @@ func New(d Deps) (*Machine, error) {
 		d:            d,
 		mealSession:  map[int64]domain.Score{},
 		snackSession: map[int64]bool{},
+		held:         map[domain.ButtonColor]bool{},
 	}, nil
 }
 
@@ -264,8 +298,17 @@ func (m *Machine) RefreshDogs(ctx context.Context) {
 // ----------------------------- input handlers -------------------------------
 
 func (m *Machine) onButton(ctx context.Context, ev buttons.ButtonEvent) {
+	// Track the live held-button set from the both-edge driver before dispatch:
+	// a press is recorded immediately; a release is cleared *before* the handler
+	// runs so it sees which other buttons remain held.
 	m.mu.Lock()
 	m.lastInteract = m.d.Clk.Now()
+	switch ev.Action {
+	case buttons.ActionPress:
+		m.held[ev.Color] = true
+	case buttons.ActionRelease:
+		delete(m.held, ev.Color)
+	}
 	mode := m.mode
 	m.mu.Unlock()
 
@@ -276,61 +319,110 @@ func (m *Machine) onButton(ctx context.Context, ev buttons.ButtonEvent) {
 		m.handleLockedButton(ctx, ev)
 	case ModeSnackMode:
 		m.handleSnackButton(ctx, ev)
+	case ModeAddInSelect:
+		// The chord's trailing edges (the meal-button and Blue releases) land
+		// here once the picker is open; swallow them. Selection is by rotary.
 	}
 }
 
+// handleIdleButton implements the deferred-commit meal flow and the add-in
+// chord (build plan §6.5). A meal-button press opens an in-memory pending
+// feeding for the selected dog; release commits it as a plain meal (unless a
+// chord opened the picker). Blue alone (no meal held during its hold) is the
+// snack button; Blue together with a meal — pressed in either order — opens
+// the add-in picker.
 func (m *Machine) handleIdleButton(ctx context.Context, ev buttons.ButtonEvent) {
-	if ev.Color == domain.BtnBlue {
-		m.enterSnackMode(ctx, ModeIdle)
-		return
-	}
-	score, ok := ev.Color.MealScore()
-	if !ok {
-		return
-	}
-	m.mu.Lock()
-	if len(m.dogs) == 0 {
+	if ev.Action == buttons.ActionPress {
+		if ev.Color == domain.BtnBlue {
+			// Reverse-chord trigger: if a meal button is already held, open the
+			// picker for the pending feeding. Otherwise arm a potential snack —
+			// confirmed on release if no meal joins the hold.
+			m.mu.Lock()
+			chord := m.mealHeldLocked() && m.pending != nil
+			if !chord {
+				m.blueArmed = true
+			}
+			m.mu.Unlock()
+			if chord {
+				m.enterAddInSelect(ctx)
+			}
+			return
+		}
+		score, ok := ev.Color.MealScore()
+		if !ok {
+			return
+		}
+		m.mu.Lock()
+		if len(m.dogs) == 0 {
+			m.mu.Unlock()
+			return
+		}
+		dog := m.dogs[m.sel]
+		// Open or update the pending feeding (last-wins on overlapping meals).
+		m.pending = &pendingFeeding{dogID: dog.ID, dog: dog, score: score}
+		blueHeld := m.held[domain.BtnBlue]
+		if blueHeld {
+			m.blueArmed = false // a meal joined the Blue hold → it's a chord, not a snack
+		}
 		m.mu.Unlock()
-		return
-	}
-	dog := m.dogs[m.sel]
-	m.mu.Unlock()
-
-	if err := m.recordFeeding(ctx, dog.ID, score, domain.SourceButton, ev.TS); err != nil {
-		m.d.Log.Error("record feeding", "err", err, "dog", dog.ID)
+		// Forward chord: Blue is already held → open the picker.
+		if blueHeld {
+			m.enterAddInSelect(ctx)
+		}
 		return
 	}
 
+	// Release.
+	if ev.Color == domain.BtnBlue {
+		m.mu.Lock()
+		armed := m.blueArmed
+		m.blueArmed = false
+		m.mu.Unlock()
+		if armed {
+			m.enterSnackMode(ctx, ModeIdle)
+		}
+		return
+	}
+	if _, ok := ev.Color.MealScore(); !ok {
+		return
+	}
 	m.mu.Lock()
-	// Advance to next dog (skip dogs already in this session).
-	m.advanceToUnfedDog()
-	allFed := len(m.mealSession) >= len(m.dogs) && len(m.dogs) > 0
+	blueHeld := m.held[domain.BtnBlue]
+	stillHeld := m.mealHeldLocked()
+	hasPending := m.pending != nil
 	m.mu.Unlock()
-
-	if allFed {
-		m.transitionToLocked(ctx, "meal complete")
+	// Commit only when no Blue is involved and the last meal button is released
+	// (last-wins: the pending already carries the most-recently-pressed score).
+	if blueHeld || stillHeld || !hasPending {
 		return
 	}
-	m.render(ctx)
+	m.commitPending(ctx, ev.TS, nil)
 }
 
 func (m *Machine) handleLockedButton(ctx context.Context, ev buttons.ButtonEvent) {
-	// In locked mode, meal buttons are ignored; blue requires long-press
-	// (handled in enterSnackMode via long-press detection — but our buttons
-	// driver only emits taps). Per build plan §6.5 the long-press of BLUE
-	// happens in this mode; since the buttons driver doesn't emit hold, we
-	// approximate by entering snack mode on a single tap of blue here too.
-	// TODO: extend buttons driver with hold detection if a tap-only proves
-	// too easy to trigger accidentally.
-	if ev.Color == domain.BtnBlue {
-		m.enterSnackMode(ctx, ModeLockedSummary)
+	// Meal buttons are ignored. Blue enters SnackMode only on a long-press,
+	// detected on the tick loop; here we just timestamp its press so the tick
+	// can measure the hold (build plan §6.5, resolution 3).
+	if ev.Color != domain.BtnBlue {
 		return
 	}
-	// Otherwise ignored.
+	m.mu.Lock()
+	if ev.Action == buttons.ActionPress {
+		m.bluePressedAt = ev.TS
+	} else {
+		m.bluePressedAt = time.Time{}
+	}
+	m.mu.Unlock()
 }
 
 func (m *Machine) handleSnackButton(ctx context.Context, ev buttons.ButtonEvent) {
 	if ev.Color != domain.BtnBlue {
+		return
+	}
+	// Snacks record on the Blue press; the release is a no-op. (A long-press
+	// from LockedSummary consumes no press here — only its trailing release
+	// arrives — so it never records a phantom snack.)
+	if ev.Action != buttons.ActionPress {
 		return
 	}
 	m.mu.Lock()
@@ -359,13 +451,37 @@ func (m *Machine) onRotary(ctx context.Context, ev rotary.Event) {
 	m.mu.Lock()
 	m.lastInteract = m.d.Clk.Now()
 	mode := m.mode
+	mealHeld := m.mealHeldLocked()
 	m.mu.Unlock()
+
+	if mode == ModeAddInSelect {
+		switch ev.Kind {
+		case rotary.RotateCW:
+			m.moveAddInIndex(+1)
+			m.render(ctx)
+		case rotary.RotateCCW:
+			m.moveAddInIndex(-1)
+			m.render(ctx)
+		case rotary.PressShort:
+			m.selectAddIn(ctx)
+		case rotary.PressLong:
+			// Escape hatch: commit the pending feeding untagged.
+			m.commitPendingUntagged(ctx)
+		}
+		return
+	}
 
 	switch ev.Kind {
 	case rotary.RotateCW:
+		if mealHeld { // rotary ignored while a meal button is held (resolution 4a)
+			return
+		}
 		m.adjustSelection(+1)
 		m.render(ctx)
 	case rotary.RotateCCW:
+		if mealHeld {
+			return
+		}
 		m.adjustSelection(-1)
 		m.render(ctx)
 	case rotary.PressShort:
@@ -375,6 +491,120 @@ func (m *Machine) onRotary(ctx context.Context, ev rotary.Event) {
 			m.clearLock(ctx, "rotary override")
 		}
 	}
+}
+
+// mealHeldLocked reports whether any meal button (G/Y/R) is currently held.
+// Caller holds m.mu.
+func (m *Machine) mealHeldLocked() bool {
+	return m.held[domain.BtnGreen] || m.held[domain.BtnYellow] || m.held[domain.BtnRed]
+}
+
+// ----------------------------- add-in picker --------------------------------
+
+// enterAddInSelect opens the per-dog-ranked add-in picker for the pending
+// feeding, with a trailing "Other (name later)" row. No-op if no pending.
+func (m *Machine) enterAddInSelect(ctx context.Context) {
+	m.mu.Lock()
+	p := m.pending
+	if p == nil {
+		m.mu.Unlock()
+		return
+	}
+	dog := p.dog
+	m.mu.Unlock()
+
+	ranked, err := m.d.Store.TagsForDog(ctx, dog.ID)
+	if err != nil {
+		m.d.Log.Warn("addin tags for dog", "dog", dog.ID, "err", err)
+	}
+	choices := make([]oled.AddInChoice, 0, len(ranked)+1)
+	for _, rt := range ranked {
+		choices = append(choices, oled.AddInChoice{TagID: rt.ID, Label: rt.Name})
+	}
+	choices = append(choices, oled.AddInChoice{Label: "Other (name later)", IsOther: true})
+
+	m.mu.Lock()
+	m.mode = ModeAddInSelect
+	m.addInChoices = choices
+	m.addInIndex = 0
+	m.blueArmed = false
+	m.lastInteract = m.d.Clk.Now()
+	m.mu.Unlock()
+	m.d.Log.Info("addin picker opened", "dog", dog.Name, "choices", len(choices))
+	m.render(ctx)
+}
+
+// moveAddInIndex scrolls the picker selection, wrapping at the ends.
+func (m *Machine) moveAddInIndex(delta int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.addInChoices)
+	if n == 0 {
+		return
+	}
+	m.addInIndex = (m.addInIndex + delta + n) % n
+}
+
+// selectAddIn commits the pending feeding with the highlighted choice: a real
+// tag, or the reserved Unspecified sentinel for "Other".
+func (m *Machine) selectAddIn(ctx context.Context) {
+	m.mu.Lock()
+	if m.addInIndex < 0 || m.addInIndex >= len(m.addInChoices) {
+		m.mu.Unlock()
+		return
+	}
+	choice := m.addInChoices[m.addInIndex]
+	m.mu.Unlock()
+
+	tagID := choice.TagID
+	if choice.IsOther {
+		tagID = store.UnspecifiedTagID
+	}
+	m.commitPending(ctx, m.d.Clk.Now(), &tagID)
+}
+
+// commitPendingUntagged commits the pending feeding as a plain meal (no tag),
+// used by the AddInSelect walk-away timeout and the rotary-long escape, so a
+// walk-away never loses the meal record.
+func (m *Machine) commitPendingUntagged(ctx context.Context) {
+	m.commitPending(ctx, m.d.Clk.Now(), nil)
+}
+
+// commitPending writes the pending feeding (optionally with one add-in tag),
+// clears the pending + picker, returns to Idle, then advances to the next
+// un-fed dog and re-checks the all-fed lock condition.
+func (m *Machine) commitPending(ctx context.Context, ts time.Time, tagID *int64) {
+	m.mu.Lock()
+	p := m.pending
+	m.pending = nil
+	m.addInChoices = nil
+	m.addInIndex = 0
+	if m.mode == ModeAddInSelect {
+		m.mode = ModeIdle
+	}
+	m.mu.Unlock()
+	if p == nil {
+		return
+	}
+	if err := m.recordFeeding(ctx, p.dogID, p.score, domain.SourceButton, ts, tagID); err != nil {
+		m.d.Log.Error("record feeding", "err", err, "dog", p.dogID)
+		return
+	}
+	m.afterMealCommit(ctx)
+}
+
+// afterMealCommit advances to the next un-fed dog and locks if every dog now
+// has a feeding in this session.
+func (m *Machine) afterMealCommit(ctx context.Context) {
+	m.mu.Lock()
+	m.advanceToUnfedDog()
+	allFed := len(m.mealSession) >= len(m.dogs) && len(m.dogs) > 0
+	m.mu.Unlock()
+	if allFed {
+		m.transitionToLocked(ctx, "meal complete")
+		return
+	}
+	m.render(ctx)
 }
 
 func (m *Machine) onTick(ctx context.Context) {
@@ -393,11 +623,24 @@ func (m *Machine) onTick(ctx context.Context) {
 		len(m.mealSession) < len(m.dogs) &&
 		!m.lastMealTS.IsZero() &&
 		now.Sub(m.lastMealTS) >= m.d.Cfg.MealCompleteGrace()
+	// Add-in walk-away: the picker has been idle past addin_idle_seconds → commit
+	// the pending feeding untagged so the meal is never lost.
+	addInIdle := mode == ModeAddInSelect &&
+		now.Sub(m.lastInteract) >= m.d.Cfg.AddInIdle()
+	// Blue long-press in LockedSummary → enter SnackMode (detected on the tick).
+	blueLong := mode == ModeLockedSummary &&
+		m.held[domain.BtnBlue] &&
+		!m.bluePressedAt.IsZero() &&
+		now.Sub(m.bluePressedAt) >= m.d.Cfg.LongPress()
 	m.mu.Unlock()
 
 	switch {
 	case expired:
 		m.clearLock(ctx, "expired")
+	case blueLong:
+		m.enterSnackMode(ctx, ModeLockedSummary)
+	case addInIdle:
+		m.commitPendingUntagged(ctx)
 	case graceLock:
 		m.transitionToLocked(ctx, "meal grace timeout")
 	case idleSnack:
@@ -445,6 +688,11 @@ func (m *Machine) clearLock(ctx context.Context, reason string) {
 	m.mode = ModeIdle
 	m.lock = domain.DeviceLock{}
 	m.lastMealTS = time.Time{}
+	m.pending = nil
+	m.addInChoices = nil
+	m.addInIndex = 0
+	m.bluePressedAt = time.Time{}
+	m.blueArmed = false
 	for k := range m.mealSession {
 		delete(m.mealSession, k)
 	}
@@ -461,6 +709,9 @@ func (m *Machine) enterSnackMode(ctx context.Context, returnTo Mode) {
 	m.mu.Lock()
 	m.returnTo = returnTo
 	m.mode = ModeSnackMode
+	m.pending = nil
+	m.bluePressedAt = time.Time{}
+	m.blueArmed = false
 	for k := range m.snackSession {
 		delete(m.snackSession, k)
 	}
@@ -510,7 +761,7 @@ func (m *Machine) advanceToUnfedDog() {
 
 // ----------------------------- recording ------------------------------------
 
-func (m *Machine) recordFeeding(ctx context.Context, dogID int64, score domain.Score, source domain.Source, ts time.Time) error {
+func (m *Machine) recordFeeding(ctx context.Context, dogID int64, score domain.Score, source domain.Source, ts time.Time, tagID *int64) error {
 	f, err := m.d.Store.CreateFeeding(ctx, domain.Feeding{
 		DogID:  dogID,
 		TS:     ts.UTC(),
@@ -520,6 +771,15 @@ func (m *Machine) recordFeeding(ctx context.Context, dogID int64, score domain.S
 	})
 	if err != nil {
 		return err
+	}
+	// Attach the chosen add-in (if any) and reload so the published event
+	// carries it. A tag failure must not lose the meal — log and continue.
+	if tagID != nil {
+		if err := m.d.Store.AttachTag(ctx, f.ID, *tagID); err != nil {
+			m.d.Log.Warn("attach add-in tag", "feeding", f.ID, "tag", *tagID, "err", err)
+		} else if reloaded, gerr := m.d.Store.GetFeeding(ctx, f.ID); gerr == nil {
+			f = reloaded
+		}
 	}
 	m.mu.Lock()
 	m.mealSession[dogID] = score
@@ -577,6 +837,11 @@ func (m *Machine) render(ctx context.Context) {
 		snackSession[k] = v
 	}
 	lock := m.lock
+	lastInteract := m.lastInteract
+	pending := m.pending
+	addInChoices := make([]oled.AddInChoice, len(m.addInChoices))
+	copy(addInChoices, m.addInChoices)
+	addInIndex := m.addInIndex
 	m.mu.RUnlock()
 
 	var scene oled.Scene
@@ -626,11 +891,19 @@ func (m *Machine) render(ctx context.Context) {
 			already = append(already, id)
 		}
 		remaining := time.Duration(0)
-		idleAt := m.lastInteract.Add(m.d.Cfg.SnackIdle())
+		idleAt := lastInteract.Add(m.d.Cfg.SnackIdle())
 		if !idleAt.Before(now) {
 			remaining = idleAt.Sub(now)
 		}
 		scene = oled.SnackModeScene{Dog: dog, Remaining: remaining, AlreadyRecorded: already}
+	case ModeAddInSelect:
+		var dog domain.Dog
+		var score domain.Score
+		if pending != nil {
+			dog = pending.dog
+			score = pending.score
+		}
+		scene = oled.AddInSelectScene{Dog: dog, Score: score, Choices: addInChoices, Index: addInIndex}
 	}
 	if err := m.d.OLED.Render(scene); err != nil {
 		m.d.Log.Warn("oled render", "err", err)
@@ -648,6 +921,9 @@ func (m *Machine) render(ctx context.Context) {
 		} else {
 			color = neopixel.Color{B: 8}
 		}
+	case ModeAddInSelect:
+		// Steady amber while the add-in picker is open.
+		color = neopixel.Color{R: 28, G: 16}
 	}
 	if err := m.d.LEDs.SetAll(color); err != nil {
 		m.d.Log.Warn("led setall", "err", err)

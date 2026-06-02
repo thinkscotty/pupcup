@@ -100,10 +100,22 @@ func newHarness(t *testing.T, dogNames ...string) *harness {
 	return h
 }
 
-// fire injects a button event and processes it synchronously.
+// fireBtn taps a button: a press immediately followed by a release, processed
+// synchronously (the common quick-tap gesture under the both-edge driver).
 func (h *harness) fireBtn(t *testing.T, c domain.ButtonColor) {
 	t.Helper()
-	h.m.onButton(h.ctx, buttons.ButtonEvent{Color: c, TS: h.clk.Now()})
+	h.pressBtn(t, c)
+	h.releaseBtn(t, c)
+}
+
+func (h *harness) pressBtn(t *testing.T, c domain.ButtonColor) {
+	t.Helper()
+	h.m.onButton(h.ctx, buttons.ButtonEvent{Color: c, Action: buttons.ActionPress, TS: h.clk.Now()})
+}
+
+func (h *harness) releaseBtn(t *testing.T, c domain.ButtonColor) {
+	t.Helper()
+	h.m.onButton(h.ctx, buttons.ButtonEvent{Color: c, Action: buttons.ActionRelease, TS: h.clk.Now()})
 }
 
 func (h *harness) fireRot(t *testing.T, k rotary.EventKind) {
