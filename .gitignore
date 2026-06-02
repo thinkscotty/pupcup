@@ -1,0 +1,15 @@
+/build/
+/bin/
+/dist/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite.bak.*
+.DS_Store
+.idea/
+.vscode/
+CLAUDE.md
+coverage.out
+coverage.html
+*.test
+*.prof
