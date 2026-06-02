@@ -1,0 +1,294 @@
+/* PupCup app shell. Palette + shapes per build plan §7.4. Quicksand (the
+   intended display face) is self-hosted in a later polish pass; the shell
+   uses a warm system stack so the page is legible without a bundled font. */
+
+:root {
+  --bg: #FFF7F0;
+  --text: #3A332B;
+  --green: #A8D8B9;
+  --yellow: #F8D8A0;
+  --red: #F2A6A1;
+  --blue: #A8C8F8;
+  --line: rgba(58, 51, 43, 0.08);
+  --shadow: 0 2px 8px rgba(58, 51, 43, 0.08);
+  --radius: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Quicksand", ui-rounded, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+a { color: inherit; }
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.25rem;
+}
+
+.brand .paw { font-size: 1.4rem; }
+
+.host-hint {
+  font-size: 0.85rem;
+  color: rgba(58, 51, 43, 0.55);
+}
+
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 1.25rem 2rem;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.5rem 1.5rem;
+}
+
+.card h1 { margin-top: 0; }
+.card.center { text-align: center; }
+
+.muted { color: rgba(58, 51, 43, 0.6); }
+
+.dog-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.dog-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-weight: 500;
+}
+
+.dog-chip .swatch {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  background: var(--accent, var(--line));
+}
+
+.site-footer {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  font-size: 0.8rem;
+  color: rgba(58, 51, 43, 0.45);
+}
+
+/* ---- top nav ---- */
+.site-nav {
+  display: flex;
+  gap: 1rem;
+  margin-right: auto;
+  margin-left: 0.5rem;
+}
+.site-nav a {
+  text-decoration: none;
+  font-weight: 500;
+  padding: 0.2rem 0.1rem;
+  border-bottom: 2px solid transparent;
+  color: rgba(58, 51, 43, 0.7);
+}
+.site-nav a.active { color: var(--text); border-bottom-color: var(--text); }
+
+/* ---- shared bits ---- */
+.card + .card { margin-top: 1.25rem; }
+.card h2 { margin-top: 0; }
+
+.avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #fff;
+  border: 2px solid var(--accent, var(--line));
+  flex: 0 0 auto;
+}
+.avatar-blank {
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 1.4rem;
+  text-transform: uppercase;
+  background: var(--accent, var(--line));
+  color: var(--text);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--line);
+}
+.badge.score-full { background: var(--green); }
+.badge.score-partial { background: var(--yellow); }
+.badge.score-none { background: var(--red); }
+.badge.badge-idle { background: var(--line); color: rgba(58, 51, 43, 0.6); }
+
+.dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  background: var(--line);
+}
+.dot.score-full { background: var(--green); }
+.dot.score-partial { background: var(--yellow); }
+.dot.score-none { background: var(--red); }
+
+/* ---- dashboard ---- */
+.dash-head h1 { margin-bottom: 0.25rem; }
+
+.status-grid {
+  margin-top: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.dog-status {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent, var(--line));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.2rem;
+}
+.dog-status-head { display: flex; align-items: center; gap: 0.8rem; }
+.dog-status-name { display: flex; flex-direction: column; gap: 0.35rem; }
+.dog-status-name h2 { margin: 0; font-size: 1.15rem; }
+.dog-status-when { margin: 0.9rem 0 0; }
+
+.meal-line {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  color: rgba(58, 51, 43, 0.7);
+}
+.meal-line li { display: inline-flex; align-items: center; }
+
+/* ---- flash banners ---- */
+.flash {
+  border-radius: var(--radius);
+  padding: 0.8rem 1.1rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
+.flash-ok { background: var(--green); }
+.flash-err { background: var(--red); }
+
+/* ---- forms ---- */
+.dog-form { display: flex; flex-direction: column; gap: 0.9rem; margin-top: 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field > span { font-weight: 500; font-size: 0.92rem; }
+.field input[type="text"],
+.field input[type="number"] {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  background: #fff;
+  color: inherit;
+}
+.field-color input[type="color"] {
+  width: 3rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.field-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.92rem; }
+.form-actions { margin-top: 0.3rem; }
+
+.palette { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.palette-dot {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.55rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--green); border-color: transparent; }
+.btn-ghost { background: transparent; }
+.btn-danger { background: var(--red); border-color: transparent; }
+
+/* ---- dogs management ---- */
+.dog-manage-list { list-style: none; margin: 1rem 0 0; padding: 0; }
+.dog-manage { padding: 0.9rem 0; border-top: 1px solid var(--line); }
+.dog-manage:first-child { border-top: 0; }
+.dog-manage-head { display: flex; align-items: center; gap: 0.9rem; }
+.dog-manage .avatar { width: 48px; height: 48px; }
+.dog-manage-meta { display: flex; flex-direction: column; gap: 0.2rem; margin-right: auto; }
+.dog-manage-name { font-weight: 600; }
+.dog-manage-sub { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.dog-manage-sub .swatch {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--accent, var(--line));
+  display: inline-block;
+}
+
+.dog-edit > summary {
+  list-style: none;
+  display: inline-block;
+}
+.dog-edit > summary::-webkit-details-marker { display: none; }
+.dog-edit[open] { display: block; width: 100%; }
+.dog-edit[open] > summary { margin-bottom: 0.5rem; }
+.dog-edit .dog-form { padding: 0.5rem 0 0; }
+.dog-delete { margin-top: 1rem; display: flex; align-items: center; gap: 0.75rem; }

@@ -7,10 +7,12 @@
 //
 //	Idle           - Rotary scrolls dogs; meal buttons record a feeding for
 //	                 the selected dog and advance to the next.
-//	LockedSummary  - All dogs have a feeding within the current meal window;
-//	                 meal buttons are ignored; LED bar is solid green.
-//	                 Long-press rotary SW clears the lock; long-press blue
-//	                 enters SnackMode.
+//	LockedSummary  - The current meal is complete: either every dog has a
+//	                 feeding, or the meal-complete grace timer elapsed with a
+//	                 partial session. Meal buttons are ignored; LED bar is
+//	                 solid green; the lock expires meal_lock after the last
+//	                 recorded meal. Long-press rotary SW clears the lock;
+//	                 long-press blue enters SnackMode.
 //	SnackMode      - Pick a dog with the rotary; tap blue to record a snack.
 //	                 Exits on idle timeout or "all dogs recorded".
 package state
@@ -90,6 +92,11 @@ type Machine struct {
 	// lastInteract is updated whenever we receive any input; powers the
 	// snack-mode idle timeout.
 	lastInteract time.Time
+	// lastMealTS is the timestamp of the most recent feeding recorded in the
+	// current meal session. The post-meal lock expiry is timed from it
+	// (locked_until = lastMealTS + meal_lock) and the meal-complete grace timer
+	// measures elapsed time from it. Zero when no meal is in progress.
+	lastMealTS time.Time
 }
 
 // New constructs a Machine. Pass at least Cfg, Bus, Store, Buttons, Rotary,
@@ -301,7 +308,7 @@ func (m *Machine) handleIdleButton(ctx context.Context, ev buttons.ButtonEvent) 
 	m.mu.Unlock()
 
 	if allFed {
-		m.transitionToLocked(ctx)
+		m.transitionToLocked(ctx, "meal complete")
 		return
 	}
 	m.render(ctx)
@@ -376,11 +383,23 @@ func (m *Machine) onTick(ctx context.Context) {
 	mode := m.mode
 	expired := mode == ModeLockedSummary && m.lock.Until != nil && !now.Before(*m.lock.Until)
 	idleSnack := mode == ModeSnackMode && now.Sub(m.lastInteract) >= m.d.Cfg.SnackIdle()
+	// Meal-complete grace: a meal is in progress (at least one dog fed) but not
+	// every dog has been fed, and the grace window has elapsed since the last
+	// recorded meal. Lock with the partial session; the un-fed dog(s) get no
+	// record and are added retroactively on the web. With grace = 0 this fires
+	// on the first tick after a non-completing feeding (lock immediately).
+	graceLock := mode == ModeIdle &&
+		len(m.mealSession) > 0 &&
+		len(m.mealSession) < len(m.dogs) &&
+		!m.lastMealTS.IsZero() &&
+		now.Sub(m.lastMealTS) >= m.d.Cfg.MealCompleteGrace()
 	m.mu.Unlock()
 
 	switch {
 	case expired:
 		m.clearLock(ctx, "expired")
+	case graceLock:
+		m.transitionToLocked(ctx, "meal grace timeout")
 	case idleSnack:
 		m.exitSnackMode(ctx)
 	default:
@@ -391,19 +410,30 @@ func (m *Machine) onTick(ctx context.Context) {
 
 // ----------------------------- transitions ----------------------------------
 
-func (m *Machine) transitionToLocked(ctx context.Context) {
-	now := m.d.Clk.Now()
-	until := now.Add(m.d.Cfg.MealLock())
-	lock := domain.DeviceLock{Until: &until, Reason: "meal complete"}
+// transitionToLocked enters LockedSummary. The lock expiry is timed from the
+// last recorded meal (locked_until = lastMealTS + meal_lock), not from "now",
+// so the window is the same whether the meal completed by all-fed or by the
+// grace timeout. reason is persisted and logged ("meal complete" when every dog
+// was fed, "meal grace timeout" when the grace timer locked a partial session).
+func (m *Machine) transitionToLocked(ctx context.Context, reason string) {
+	m.mu.Lock()
+	base := m.lastMealTS
+	m.mu.Unlock()
+	if base.IsZero() {
+		base = m.d.Clk.Now()
+	}
+	until := base.Add(m.d.Cfg.MealLock())
+	lock := domain.DeviceLock{Until: &until, Reason: reason}
 	if err := m.d.Store.SetDeviceLock(ctx, lock); err != nil {
 		m.d.Log.Error("persist lock", "err", err)
 	}
 	m.mu.Lock()
 	m.mode = ModeLockedSummary
 	m.lock = lock
+	fed, total := len(m.mealSession), len(m.dogs)
 	m.mu.Unlock()
-	m.d.Bus.Publish(domain.LockChanged{Lock: lock, At: now})
-	m.d.Log.Info("locked summary entered", "until", until)
+	m.d.Bus.Publish(domain.LockChanged{Lock: lock, At: m.d.Clk.Now()})
+	m.d.Log.Info("locked summary entered", "until", until, "reason", reason, "fed", fed, "dogs", total)
 	m.render(ctx)
 }
 
@@ -414,6 +444,7 @@ func (m *Machine) clearLock(ctx context.Context, reason string) {
 	m.mu.Lock()
 	m.mode = ModeIdle
 	m.lock = domain.DeviceLock{}
+	m.lastMealTS = time.Time{}
 	for k := range m.mealSession {
 		delete(m.mealSession, k)
 	}
@@ -492,6 +523,7 @@ func (m *Machine) recordFeeding(ctx context.Context, dogID int64, score domain.S
 	}
 	m.mu.Lock()
 	m.mealSession[dogID] = score
+	m.lastMealTS = ts
 	dog := m.findDog(dogID)
 	m.mu.Unlock()
 	m.d.Bus.Publish(domain.FeedRecorded{Feeding: f, Dog: dog})
@@ -530,7 +562,6 @@ func (m *Machine) findDog(id int64) domain.Dog {
 // ----------------------------- rendering ------------------------------------
 
 func (m *Machine) render(ctx context.Context) {
-	_ = ctx
 	m.mu.RLock()
 	mode := m.mode
 	dogs := make([]domain.Dog, len(m.dogs))
@@ -557,12 +588,27 @@ func (m *Machine) render(ctx context.Context) {
 			scene = oled.DogSelectorScene{Dog: dogs[sel], Index: sel, Total: len(dogs), Now: now}
 		}
 	case ModeLockedSummary:
+		// Mark any dog that also received a snack since this lock began (the
+		// `*` marker, SummaryEntry.HasSnack). Queried fresh each render so a
+		// snack added from the web during the lock also shows. The lock began
+		// at locked_until - meal_lock.
+		snacked := map[int64]bool{}
+		if lock.Until != nil {
+			since := lock.Until.Add(-m.d.Cfg.MealLock())
+			if sn, err := m.d.Store.ListSnacks(ctx, store.SnackFilter{Since: since}); err != nil {
+				m.d.Log.Warn("summary snacks", "err", err)
+			} else {
+				for _, s := range sn {
+					snacked[s.DogID] = true
+				}
+			}
+		}
 		var entries []oled.SummaryEntry
 		for _, d := range dogs {
 			entries = append(entries, oled.SummaryEntry{
 				DogName:  d.Name,
 				Score:    mealSession[d.ID],
-				HasSnack: false, // populated by future snack-during-lock handling
+				HasSnack: snacked[d.ID],
 			})
 		}
 		until := time.Time{}

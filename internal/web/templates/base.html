@@ -1,0 +1,28 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}PupCup{{end}}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="paw" aria-hidden="true">&#128062;</span>
+      <span class="brand-name">PupCup</span>
+    </a>
+    <nav class="site-nav">
+      <a href="/"{{if eq .Nav "dashboard"}} class="active" aria-current="page"{{end}}>Today</a>
+      <a href="/dogs"{{if eq .Nav "dogs"}} class="active" aria-current="page"{{end}}>Dogs</a>
+    </nav>
+    {{if .Host}}<span class="host-hint">{{.Host}}</span>{{end}}
+  </header>
+  <main class="page">
+    {{block "content" .}}{{end}}
+  </main>
+  <footer class="site-footer">
+    <span>PupCup {{.Version}}</span>
+  </footer>
+</body>
+</html>{{end}}

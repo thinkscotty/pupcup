@@ -240,6 +240,80 @@ func TestLockExpiry_ClearsOnTick(t *testing.T) {
 	}
 }
 
+func TestGraceTimeout_LocksPartialFromLastMeal(t *testing.T) {
+	h := newHarness(t, "Cleo", "Rio", "Pip")
+	fedAt := h.clk.Now()
+	h.fireBtn(t, domain.BtnGreen) // only Cleo fed; meal incomplete → still Idle
+	if h.m.Mode() != ModeIdle {
+		t.Fatalf("expected Idle mid-meal, got %s", h.m.Mode())
+	}
+
+	// Grace window (default 15m) elapses with the meal still incomplete.
+	h.clk.Advance(h.m.d.Cfg.MealCompleteGrace())
+	h.m.onTick(h.ctx)
+
+	if h.m.Mode() != ModeLockedSummary {
+		t.Fatalf("expected LockedSummary after grace, got %s", h.m.Mode())
+	}
+	// Un-fed dogs get NO record: exactly one feeding persisted.
+	got, _ := h.store.ListFeedings(h.ctx, store.FeedingFilter{})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 feeding (partial), got %d", len(got))
+	}
+	// Expiry is timed from the last (only) meal, not from the grace tick.
+	lock := h.m.Lock()
+	if lock.Until == nil {
+		t.Fatal("lock not set")
+	}
+	want := fedAt.Add(h.m.d.Cfg.MealLock())
+	if !lock.Until.Equal(want) {
+		t.Fatalf("lock.Until = %s, want %s (last meal + lock)", lock.Until, want)
+	}
+	if lock.Reason != "meal grace timeout" {
+		t.Fatalf("lock reason = %q", lock.Reason)
+	}
+}
+
+func TestGraceTimeout_ResetByEachFeeding(t *testing.T) {
+	h := newHarness(t, "Cleo", "Rio", "Pip")
+	h.fireBtn(t, domain.BtnGreen) // Cleo @ t0
+	h.clk.Advance(10 * time.Minute)
+	h.fireBtn(t, domain.BtnYellow) // Rio @ t0+10m → resets grace timer
+	h.clk.Advance(10 * time.Minute)
+	h.m.onTick(h.ctx) // only 10m since last meal (< 15m grace) → no lock yet
+	if h.m.Mode() != ModeIdle {
+		t.Fatalf("grace should have reset on 2nd feeding; got %s", h.m.Mode())
+	}
+	h.clk.Advance(5 * time.Minute)
+	h.m.onTick(h.ctx) // now 15m since last meal → lock
+	if h.m.Mode() != ModeLockedSummary {
+		t.Fatalf("expected lock 15m after last meal, got %s", h.m.Mode())
+	}
+	got, _ := h.store.ListFeedings(h.ctx, store.FeedingFilter{})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 feedings, got %d", len(got))
+	}
+}
+
+func TestAllFed_ExpiryTimedFromLastMeal(t *testing.T) {
+	h := newHarness(t, "Cleo", "Rio")
+	h.fireBtn(t, domain.BtnGreen) // Cleo @ t0
+	h.clk.Advance(30 * time.Minute)
+	lastMeal := h.clk.Now()
+	h.fireBtn(t, domain.BtnYellow) // Rio @ t0+30m → all fed → immediate lock
+	if h.m.Mode() != ModeLockedSummary {
+		t.Fatalf("expected LockedSummary on all-fed, got %s", h.m.Mode())
+	}
+	lock := h.m.Lock()
+	want := lastMeal.Add(h.m.d.Cfg.MealLock())
+	if lock.Until == nil || !lock.Until.Equal(want) {
+		t.Fatalf("lock.Until = %v, want %s (last meal + lock, not first meal)", lock.Until, want)
+	}
+	if lock.Reason != "meal complete" {
+		t.Fatalf("lock reason = %q", lock.Reason)
+	}
+}
+
 func TestSnackMode_FromIdle(t *testing.T) {
 	h := newHarness(t, "Cleo", "Rio")
 	h.fireBtn(t, domain.BtnBlue)

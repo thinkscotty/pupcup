@@ -9,13 +9,21 @@ See [pupcup_build_plan.md](pupcup_build_plan.md) for architecture and [pupcup_ha
 ```sh
 go build ./...
 go test ./...
-go run ./cmd/pupcup --config deploy/config.example.yaml
+# Defaults bind :80 and write to /var/lib/pupcup (needs root); for local dev use
+# a high port, a writable DB path, and a writable photo dir. On a laptop the
+# hardware drivers are Fakes, so the daemon seeds the household's dogs, shows the
+# boot splash, serves the web app, advertises mDNS, and exits cleanly on Ctrl-C.
+PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite PUPCUP_PHOTO_DIR=./photos go run ./cmd/pupcup
+# Visit http://localhost:8080/ for the dashboard (who's been fed today),
+# /dogs to add/edit dogs (name, accent color, photo), or /healthz for the probe.
 ```
 
 ## Cross-compile + deploy to Pi
 
+> Deployment tooling (`deploy/deploy.sh`, `bootstrap.sh`, `pupcup.service`, `config.example.yaml`) lands in milestone 14 — see [pupcup_build_plan.md](pupcup_build_plan.md) §10. Until then, cross-compile manually:
+
 ```sh
-TARGET=pupcup@pupcup.local ./deploy/deploy.sh
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o build/pupcup ./cmd/pupcup
 ```
 
 ## License

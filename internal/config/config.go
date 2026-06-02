@@ -34,10 +34,16 @@ type Config struct {
 	LongPressMS     int `yaml:"long_press_ms" env:"LONG_PRESS_MS"`
 
 	// Behavior
-	MealLockMinutes      int    `yaml:"meal_lock_minutes" env:"MEAL_LOCK_MINUTES"`
-	SnackModeIdleSeconds int    `yaml:"snack_mode_idle_seconds" env:"SNACK_MODE_IDLE_SECONDS"`
-	DefaultFeedKind      string `yaml:"default_feed_kind" env:"DEFAULT_FEED_KIND"`
-	MDNSHostname         string `yaml:"mdns_hostname" env:"MDNS_HOSTNAME"`
+	MealLockMinutes          int    `yaml:"meal_lock_minutes" env:"MEAL_LOCK_MINUTES"`
+	MealCompleteGraceMinutes int    `yaml:"meal_complete_grace_minutes" env:"MEAL_COMPLETE_GRACE_MINUTES"`
+	SnackModeIdleSeconds     int    `yaml:"snack_mode_idle_seconds" env:"SNACK_MODE_IDLE_SECONDS"`
+	AddInIdleSeconds         int    `yaml:"addin_idle_seconds" env:"ADDIN_IDLE_SECONDS"`
+	DefaultFeedKind          string `yaml:"default_feed_kind" env:"DEFAULT_FEED_KIND"`
+	MDNSHostname             string `yaml:"mdns_hostname" env:"MDNS_HOSTNAME"`
+
+	// Web / photos
+	PhotoMaxKB int `yaml:"photo_max_kb" env:"PHOTO_MAX_KB"`
+	PhotoMaxPx int `yaml:"photo_max_px" env:"PHOTO_MAX_PX"`
 
 	// Resolved at validation
 	Location *time.Location `yaml:"-"`
@@ -75,10 +81,15 @@ func Default() Config {
 		RotaryDebounceMS: 5,
 		LongPressMS:      1500,
 
-		MealLockMinutes:      240,
-		SnackModeIdleSeconds: 60,
-		DefaultFeedKind:      "standard",
-		MDNSHostname:         "pupcup",
+		MealLockMinutes:          240,
+		MealCompleteGraceMinutes: 15,
+		SnackModeIdleSeconds:     60,
+		AddInIdleSeconds:         30,
+		DefaultFeedKind:          "standard",
+		MDNSHostname:             "pupcup",
+
+		PhotoMaxKB: 150,
+		PhotoMaxPx: 320,
 	}
 }
 
@@ -190,8 +201,21 @@ func (c *Config) validate() error {
 	if c.MealLockMinutes < 1 {
 		errs = append(errs, "meal_lock_minutes must be >= 1")
 	}
+	if c.MealCompleteGraceMinutes < 0 {
+		// 0 = lock immediately on the last recorded meal even if dogs remain un-fed.
+		errs = append(errs, "meal_complete_grace_minutes must be >= 0")
+	}
 	if c.SnackModeIdleSeconds < 1 {
 		errs = append(errs, "snack_mode_idle_seconds must be >= 1")
+	}
+	if c.AddInIdleSeconds < 1 {
+		errs = append(errs, "addin_idle_seconds must be >= 1")
+	}
+	if c.PhotoMaxKB < 1 {
+		errs = append(errs, "photo_max_kb must be >= 1")
+	}
+	if c.PhotoMaxPx < 1 {
+		errs = append(errs, "photo_max_px must be >= 1")
 	}
 	if c.ButtonDebounceMS < 0 {
 		errs = append(errs, "button_debounce_ms must be >= 0")
@@ -240,9 +264,16 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// MealLock returns the configured lock duration.
+// MealLock returns the configured post-meal lock duration.
 func (c Config) MealLock() time.Duration {
 	return time.Duration(c.MealLockMinutes) * time.Minute
+}
+
+// MealCompleteGrace returns how long, after the first dog is fed, the device
+// waits for the remaining dogs before locking with a partial meal. 0 = lock as
+// soon as the next tick observes the meal is still incomplete.
+func (c Config) MealCompleteGrace() time.Duration {
+	return time.Duration(c.MealCompleteGraceMinutes) * time.Minute
 }
 
 // SnackIdle returns the configured snack-mode idle timeout.
@@ -250,9 +281,26 @@ func (c Config) SnackIdle() time.Duration {
 	return time.Duration(c.SnackModeIdleSeconds) * time.Second
 }
 
+// AddInIdle returns the AddInSelect walk-away timeout: when it elapses the
+// pending meal is committed untagged rather than lost.
+func (c Config) AddInIdle() time.Duration {
+	return time.Duration(c.AddInIdleSeconds) * time.Second
+}
+
 // LongPress returns the long-press threshold.
 func (c Config) LongPress() time.Duration {
 	return time.Duration(c.LongPressMS) * time.Millisecond
+}
+
+// ButtonDebounce returns the per-button debounce quiet period.
+func (c Config) ButtonDebounce() time.Duration {
+	return time.Duration(c.ButtonDebounceMS) * time.Millisecond
+}
+
+// RotaryDebounce returns the rotary debounce window. Retained for config
+// compatibility; the Buxton decoder rejects bounce structurally and ignores it.
+func (c Config) RotaryDebounce() time.Duration {
+	return time.Duration(c.RotaryDebounceMS) * time.Millisecond
 }
 
 // AbsDBPath returns DBPath made absolute relative to cwd if it is relative.

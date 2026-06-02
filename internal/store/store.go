@@ -80,6 +80,42 @@ func (s *Store) Close() error { return s.db.Close() }
 // tests). Most callers should use the typed methods.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// SizeBytes returns the on-disk size of the database file, or 0 for an
+// in-memory store. Used by /healthz. A missing file (not yet created) is 0.
+func (s *Store) SizeBytes() (int64, error) {
+	if s.path == "" {
+		return 0, nil
+	}
+	fi, err := os.Stat(s.path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
+// LastButtonEventTime returns the timestamp of the most recent non-deleted
+// device-sourced (button) feeding or snack, or nil if none exists. Used by
+// /healthz as a device-liveness signal without subscribing to the event bus.
+func (s *Store) LastButtonEventTime(ctx context.Context) (*time.Time, error) {
+	var ts sql.NullString
+	row := s.db.QueryRowContext(ctx, `
+		SELECT MAX(ts_utc) FROM (
+			SELECT ts_utc FROM feedings WHERE source='button' AND deleted_at IS NULL
+			UNION ALL
+			SELECT ts_utc FROM snacks   WHERE source='button' AND deleted_at IS NULL
+		)`)
+	if err := row.Scan(&ts); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return scanNullableTime(ts)
+}
+
 // ----------------------------- migrations -----------------------------------
 
 func (s *Store) migrate() error {
@@ -323,14 +359,42 @@ func (s *Store) SoftDeleteDog(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
+// ActiveEntryCounts returns, per dog id, the number of non-deleted feedings
+// plus snacks. The dogs-management page uses it to show why a dog can't yet be
+// deleted (SoftDeleteDog enforces the same rule transactionally). One grouped
+// query rather than a count per dog. Dogs with zero entries are simply absent
+// from the map.
+func (s *Store) ActiveEntryCounts(ctx context.Context) (map[int64]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT dog_id, COUNT(*) FROM (
+			SELECT dog_id FROM feedings WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT dog_id FROM snacks   WHERE deleted_at IS NULL
+		) GROUP BY dog_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]int)
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 type scanner interface {
 	Scan(...any) error
 }
 
 func scanDog(s scanner) (domain.Dog, error) {
 	var (
-		d        domain.Dog
-		created  string
+		d       domain.Dog
+		created string
 	)
 	if err := s.Scan(&d.ID, &d.Name, &d.AccentColor, &d.PhotoPath, &d.SortOrder, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -373,10 +437,10 @@ const feedingSelect = `SELECT id, dog_id, ts_utc, kind, score, COALESCE(specific
 
 // FeedingFilter narrows the result set for ListFeedings.
 type FeedingFilter struct {
-	DogID         int64 // 0 = any
-	Since, Until  time.Time
+	DogID          int64 // 0 = any
+	Since, Until   time.Time
 	IncludeDeleted bool
-	Limit         int // 0 = no limit
+	Limit          int // 0 = no limit
 }
 
 // ListFeedings returns feedings matching the filter, newest first.
@@ -459,9 +523,9 @@ func (s *Store) SoftDeleteFeeding(ctx context.Context, id int64) error {
 
 func scanFeeding(s scanner) (domain.Feeding, error) {
 	var (
-		f          domain.Feeding
-		ts, created string
-		del, edit  sql.NullString
+		f                   domain.Feeding
+		ts, created         string
+		del, edit           sql.NullString
 		kind, score, source string
 	)
 	if err := s.Scan(&f.ID, &f.DogID, &ts, &kind, &score, &f.Specifics, &source, &del, &edit, &created); err != nil {
@@ -602,10 +666,10 @@ func (s *Store) SoftDeleteSnack(ctx context.Context, id int64) error {
 
 func scanSnack(s scanner) (domain.Snack, error) {
 	var (
-		sn         domain.Snack
+		sn          domain.Snack
 		ts, created string
-		del, edit  sql.NullString
-		source     string
+		del, edit   sql.NullString
+		source      string
 	)
 	if err := s.Scan(&sn.ID, &sn.DogID, &ts, &sn.Specifics, &source, &del, &edit, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -711,10 +775,10 @@ func (s *Store) DeleteIllness(ctx context.Context, id int64) error {
 
 func scanIllness(s scanner) (domain.IllnessEvent, error) {
 	var (
-		e        domain.IllnessEvent
-		start    string
-		end      sql.NullString
-		created  string
+		e       domain.IllnessEvent
+		start   string
+		end     sql.NullString
+		created string
 	)
 	if err := s.Scan(&e.ID, &e.DogID, &start, &end, &e.Notes, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

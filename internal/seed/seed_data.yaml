@@ -1,0 +1,7 @@
+## Seed Data for Initial PupCup Database
+
+dogs:
+  - {name: Riley,  accent_color: "#F2A6A1", sort_order: 0}
+  - {name: Bentley,  accent_color: "#F8D8A0", sort_order: 1}
+  - {name: Bard,  accent_color: "#A8C8F8", sort_order: 2}
+feed_tags: [Shredded Chicken, Cheese, Parmesan, Wet Food, Freeze-Dried Liver, Freeze-Dried Beef Patty, Milk, Rice]

@@ -87,6 +87,52 @@ func TestSoftDeleteDog_BlockedByEntries(t *testing.T) {
 	}
 }
 
+func TestActiveEntryCounts(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	a, _ := s.CreateDog(ctx, domain.Dog{Name: "Ada", AccentColor: "#A8D8B9"})
+	b, _ := s.CreateDog(ctx, domain.Dog{Name: "Bo", AccentColor: "#A8C8F8"})
+	_, _ = s.CreateDog(ctx, domain.Dog{Name: "Cy", AccentColor: "#F8D8A0"}) // no entries
+
+	now := time.Now().UTC()
+	mk := func(dog int64) {
+		if _, err := s.CreateFeeding(ctx, domain.Feeding{
+			DogID: dog, TS: now, Kind: domain.FeedStandard, Score: domain.ScoreFull, Source: domain.SourceWeb,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(a.ID)
+	mk(a.ID)
+	if _, err := s.CreateSnack(ctx, domain.Snack{DogID: b.ID, TS: now, Source: domain.SourceWeb}); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := s.ActiveEntryCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[a.ID] != 2 { // two feedings
+		t.Errorf("Ada count = %d, want 2", counts[a.ID])
+	}
+	if counts[b.ID] != 1 { // one snack
+		t.Errorf("Bo count = %d, want 1", counts[b.ID])
+	}
+	if _, ok := counts[3]; ok {
+		t.Errorf("Cy (no entries) should be absent from the map, got %d", counts[3])
+	}
+
+	// A soft-deleted entry drops out of the count.
+	feeds, _ := s.ListFeedings(ctx, FeedingFilter{DogID: a.ID})
+	if err := s.SoftDeleteFeeding(ctx, feeds[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	counts, _ = s.ActiveEntryCounts(ctx)
+	if counts[a.ID] != 1 {
+		t.Errorf("Ada count after delete = %d, want 1", counts[a.ID])
+	}
+}
+
 func TestFeedingCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

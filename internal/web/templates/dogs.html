@@ -1,0 +1,103 @@
+{{define "title"}}PupCup &mdash; Dogs{{end}}
+{{define "content"}}
+
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}">{{.Flash.Msg}}</div>{{end}}
+
+<section class="card">
+  <h1>Add a dog</h1>
+  <form class="dog-form" method="post" action="/dogs" enctype="multipart/form-data">
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" maxlength="40" required autocomplete="off" placeholder="e.g. Riley">
+    </label>
+    <label class="field field-color">
+      <span>Accent color</span>
+      <input type="color" name="accent_color" value="#A8D8B9">
+    </label>
+    {{template "palette" .Palette}}
+    <label class="field">
+      <span>Photo <span class="muted">(optional, JPEG/PNG)</span></span>
+      <input type="file" name="photo" accept="image/jpeg,image/png">
+    </label>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Add dog</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Your dogs</h2>
+  {{if .Dogs}}
+  <ul class="dog-manage-list">
+    {{range .Dogs}}
+    <li class="dog-manage" style="--accent: {{.AccentColor}}">
+      <div class="dog-manage-head">
+        {{if .HasPhoto}}
+        <img class="avatar" src="/photos/{{.ID}}" alt="{{.Name}}" width="48" height="48">
+        {{else}}
+        <span class="avatar avatar-blank" aria-hidden="true">{{slice .Name 0 1}}</span>
+        {{end}}
+        <div class="dog-manage-meta">
+          <span class="dog-manage-name">{{.Name}}</span>
+          <span class="muted dog-manage-sub">
+            <span class="swatch" aria-hidden="true"></span>{{.AccentColor}}
+            {{if .ActiveEntries}} &middot; {{.ActiveEntries}} entr{{if eq .ActiveEntries 1}}y{{else}}ies{{end}}{{end}}
+          </span>
+        </div>
+        <details class="dog-edit">
+          <summary class="btn btn-ghost">Edit</summary>
+          <form class="dog-form" method="post" action="/dogs/{{.ID}}" enctype="multipart/form-data">
+            <label class="field">
+              <span>Name</span>
+              <input type="text" name="name" maxlength="40" required value="{{.Name}}" autocomplete="off">
+            </label>
+            <label class="field field-color">
+              <span>Accent color</span>
+              <input type="color" name="accent_color" value="{{.AccentColor}}">
+            </label>
+            <label class="field">
+              <span>Sort order</span>
+              <input type="number" name="sort_order" value="{{.SortOrder}}" step="1">
+            </label>
+            <label class="field">
+              <span>Replace photo <span class="muted">(JPEG/PNG)</span></span>
+              <input type="file" name="photo" accept="image/jpeg,image/png">
+            </label>
+            {{if .HasPhoto}}
+            <label class="field-check">
+              <input type="checkbox" name="remove_photo" value="1"> Remove current photo
+            </label>
+            {{end}}
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Save changes</button>
+            </div>
+          </form>
+
+          <form class="dog-delete" method="post" action="/dogs/{{.ID}}"
+                onsubmit="return confirm('Remove {{.Name}}? This can\'t be undone.')">
+            <input type="hidden" name="_method" value="DELETE">
+            {{if .CanDelete}}
+            <button type="submit" class="btn btn-danger">Remove dog</button>
+            {{else}}
+            <button type="submit" class="btn btn-danger" disabled
+                    title="A dog with feeding history can't be removed">Remove dog</button>
+            <span class="muted">Has feeding history &mdash; can't be removed.</span>
+            {{end}}
+          </form>
+        </details>
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+  <p class="muted">No dogs yet. Add one above.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "palette"}}
+<div class="palette" aria-hidden="true">
+  <span class="muted">Suggested:</span>
+  {{range .}}<span class="palette-dot" style="background: {{.Hex}}" title="{{.Name}} {{.Hex}}"></span>{{end}}
+</div>
+{{end}}

@@ -4,16 +4,31 @@ The end-to-end software design for PupCup: a single pure-Go binary that runs on 
 
 > Hardware build is documented separately in [pupcup_hardware_build.md](pupcup_hardware_build.md). This plan assumes that build is complete and the Pi is provisioned per its instructions.
 
+## Progress Summary
+
+_Last updated: 2026-06-02 — **milestone 9 done** (dashboard + dogs management): `internal/web` now serves the real **dashboard** (`GET /` — per-dog "fed today / last fed + score" for the local day) and the **dogs-management** surface (`/dogs` list/create/update name·color·photo, soft-delete guarded against deleting a dog with feeding history, and `GET /photos/{id}` served from `photo_dir` with a Clean + dir-prefix guard; uploads validated to JPEG/PNG · ≤`photo_max_kb` · ≤`photo_max_px`). Plain HTML forms reach the `DELETE`/`PATCH` routes via a `methodOverride` middleware, so the app works without JavaScript (HTMX arrives in m10). New `Store.ActiveEntryCounts` backs the "can't delete — has history" affordance. Builds/vets/tests green (new dashboard/dogs/photo/method-override/traversal tests); arm64 cross-compile and a live laptop smoke (dashboard render, dog create/update/delete, photo upload→`/photos/{id}` byte-exact round-trip, invalid-input rejection, clean SIGTERM) pass. **Milestone 8** (the web shell + `internal/mdns` `_http._tcp` advertiser, both running alongside the device loop in `main.go` with graceful shutdown) remains in place. The web layer is request/response and does not subscribe to the event bus. Keep this section and the §12 milestone ledger in sync as major components land._
+
+**Status legend:** ✅ Completed · 🟡 Partly completed (see note) · ⬜ Not started. Markers appear on the concrete build elements in §3–§13; the strategy/requirements sections (§1, §2, §14) are intentionally unmarked. The per-milestone ledger in **§12** is the primary, regularly-updated tracker — update it alongside this summary.
+
+Hardware bring-up is complete — every peripheral (OLED, four buttons, KY-040 rotary, SK6812 NeoPixel, DS1307 RTC) is confirmed working, and the four `cmd/hwprobe` tools that exercise them are in place. On top of that, the pure-Go software baseline compiles, `go vet`s, unit-tests, and cross-compiles to `linux/arm64` cleanly. That baseline includes the full persistence layer (`internal/store` — dogs, feedings, snacks, illness, stress, and device-lock CRUD with soft-delete, filters, numbered migrations, and a pre-migration backup), the domain types and the in-process event bus, the configuration loader (YAML + `PUPCUP_*` env overrides + fail-fast validation), the testable clock, and all four hardware drivers behind build-tag-split interfaces with Fakes.
+
+The device state machine is unit-tested for its three implemented modes — `Idle`, `LockedSummary`, and `SnackMode` — covering dog selection, meal recording, the all-dogs-fed lock, the meal-complete grace timeout (locks a partial session, leaving un-fed dogs unrecorded), last-meal-timed lock expiry, the snack marker, lock persistence/rehydration across restart, and the long-press override. The daemon entrypoint (`cmd/pupcup/main.go`) is **now wired**: it loads config, opens and first-boot-seeds the store (three dogs via the embedded `internal/seed`), constructs the four drivers (real on the Pi, Fakes elsewhere via the build-tag split) plus the state machine, runs the device loop, and shuts down gracefully on SIGINT/SIGTERM with sd_notify readiness + watchdog heartbeats (`internal/systemd`). It builds, vets, unit-tests, cross-compiles to `linux/arm64`, and has been smoke-run on the laptop (seeds 3 dogs on first boot, no re-seed thereafter, clean shutdown). The buttons driver is still press-only, pending the both-edge upgrade the add-in chord depends on (milestone 10.5).
+
+The web shell is now in place (milestone 8): `internal/web` serves the app chrome through an embedded `html/template` base layout, embedded static CSS, a custom 404, and the `/healthz` liveness probe (deriving its fields — uptime, DB size, device-lock state, last button-sourced entry — from the store on demand, with no event-bus subscription), all behind a request-logging middleware; `internal/mdns` advertises the service over multicast DNS as a soft dependency (a registration failure is logged, never fatal). Both are wired into `main.go` and shut down gracefully with the device loop.
+
+The dashboard and dogs-management/photo surfaces landed in milestone 9 (per-dog daily feeding status; dog CRUD with name·color·photo and `/photos/{id}` serving). Not yet started: the remaining data-rich web surfaces (feedings/snacks/illness/stress pages, history, HTMX interactions, server-rendered SVG charts), the add-in meal-tags feature end-to-end (schema, domain type, store ranking methods, device `AddInSelect` state, and web tag surfaces), and all deployment artifacts (systemd unit, `deploy.sh`, `bootstrap.sh`, `config.example.yaml`). The §6.5 behavioral questions (lock trigger, meal window, Blue long-press, deferred-commit edge cases) and the photo-serving approach were **resolved on 2026-06-02** and specified in §6.5/§7/§8; the lock-trigger and meal-window refinements (grace timeout, last-meal-timed expiry, snack marker) are now **implemented** (milestone 7.5), while the deferred-commit flow, the add-in chord + `AddInSelect`, and the Blue-long-press both-edge upgrade remain for milestone 10.5. The SQLite durability stance is `synchronous=NORMAL` (no corruption on power loss; the last feeding(s) may be lost on a hard cut and re-added retroactively).
+
 ## 1. Goals and non-goals
 
 ### Goals
-1. Press-and-go logging of meal feedings (Green/Yellow/Red) and snacks (Blue) per dog from the physical device, with sub-second latency from button press to OLED confirmation and DB write.
+1. Press-and-go logging of meal feedings (Green/Yellow/Red) and snacks (Blue) per dog from the physical device, with sub-second latency from button release to OLED confirmation and DB write.
 2. Local-network web app for richer entry (specifics, illness, stress events), editing past entries, retroactive entries, and v1 analytics.
 3. Single-device deployment — one Pi, one binary, one SQLite file.
 4. "Were the dogs fed?" glanceable answer via the front-edge LED bar after meals.
 5. Pure Go, no CGO, cross-compilable from a developer laptop.
 6. Pleasant, playful UI — soft pastels, paw-print accents, friendly typography.
 7. Future-feature seams: data-trend analytics and Home Assistant integration are anticipated but not built in v1.
+8. **Add-in meal tags** — record optional "add-ins" mixed into an otherwise standard meal (e.g. shredded chicken, cheese, freeze-dried liver) both from the web app and from the physical device, so the picky-eater dataset captures *what was added* alongside *how well it was eaten*. Tags are a configurable per-household catalog; a feeding can carry any number of them (web) and is taggable retroactively.
 
 ### Non-goals (explicit)
 - No authentication, user accounts, or per-user attribution. The site binds to LAN interfaces only.
@@ -50,46 +65,51 @@ A single Go binary with multiple goroutines, communicating through a typed in-me
 
 Why single-binary single-process: simplest deployment, no IPC, lowest RAM footprint, leverages Go concurrency primitives. The event bus interface is the seam that lets us split into separate processes later if we want to (it would only require swapping a buffered channel for a localhost socket).
 
-## 3. Repository layout
+## 3. Repository layout — 🟡
+
+> 🟡 **Partly completed** — most `internal/` packages exist and build, including `internal/web/` (the shell plus the milestone-9 dashboard + dogs-management/photo surfaces) and `internal/mdns/`; `cmd/pupcup/main.go` is wired and drives the device + web + mDNS; only `deploy/` does not exist yet. Per-path status is annotated inline below. **Note:** tests are co-located as `<pkg>_test.go` inside each package (no top-level `test/` dir). Web handlers live flat in the `web` package root (`web.go`/`dogs.go`/`photos.go`) rather than the originally-sketched `handlers/` subdir.
 
 ```
 pupcup/
 ├── cmd/
 │   ├── pupcup/             # main daemon
-│   │   └── main.go         # config load, wiring, signal handling
-│   └── hwprobe/            # standalone bring-up tools (one tiny main per peripheral)
-│       ├── oled/main.go
-│       ├── buttons/main.go
-│       ├── rotary/main.go
-│       └── neopixel/main.go
+│   │   └── main.go         # config load, driver wiring, state machine, web server + mDNS, signal handling, sd_notify — ✅
+│   └── hwprobe/            # standalone bring-up tools (one tiny main per peripheral) — ✅
+│       ├── oled/main.go        # ✅
+│       ├── buttons/main.go     # ✅
+│       ├── rotary/main.go      # ✅
+│       └── neopixel/main.go    # ✅
 ├── internal/
-│   ├── config/             # YAML + env config; one struct, validated on load
-│   ├── clock/              # time.Now wrapper for testability (real & fake)
-│   ├── store/              # SQLite wrappers — schema, migrations, queries
-│   ├── domain/             # types: Dog, Feeding, Snack, IllnessEvent, StressEvent, ButtonColor, Score, FeedKind
-│   ├── eventbus/           # typed pub/sub on buffered channel
+│   ├── config/             # YAML + env config; one struct, validated on load — ✅
+│   ├── clock/              # time.Now wrapper for testability (real & fake) — ✅
+│   ├── store/              # SQLite wrappers — schema, migrations, queries — 🟡 (core CRUD ✅; tag methods pending, §5.4)
+│   ├── domain/             # types: Dog, Feeding, Snack, FeedTag, IllnessEvent, StressEvent, ButtonColor, Score, FeedKind — 🟡 (FeedTag + Feeding.Tags pending)
+│   ├── eventbus/           # typed pub/sub on buffered channel — ✅
+│   ├── seed/               # embedded first-boot seed data (seed_data.yaml: dogs + tag list) — ✅
+│   ├── systemd/            # pure-Go sd_notify: readiness + watchdog, no-op off systemd — ✅
 │   ├── device/
-│   │   ├── buttons/        # 4-button driver (debounced, periph.io)
-│   │   ├── rotary/         # KY-040 quadrature decoder + button + long-press
-│   │   ├── oled/           # SSD1306 wrapper + screen renderer
-│   │   ├── neopixel/       # SK6812 SPI bit-bang driver (pure Go)
-│   │   └── state/          # device state machine
-│   ├── web/
-│   │   ├── server.go       # http.Server, routes, middleware
-│   │   ├── handlers/       # one file per page (dashboard.go, dogs.go, …)
-│   │   ├── templates/      # *.html — base + partials
-│   │   ├── static/         # css, htmx.min.js, fonts, paw icons
-│   │   └── chart/          # server-rendered SVG helpers
-│   └── mdns/               # zeroconf wrapper
-├── deploy/
+│   │   ├── hostinit/       # idempotent periph.io host.Init wrapper — ✅
+│   │   ├── buttons/        # 4-button driver (debounced, periph.io) — 🟡 (press-only; both-edge upgrade pending, §6.1)
+│   │   ├── rotary/         # KY-040 Buxton table decoder + button + long-press — ✅
+│   │   ├── oled/           # SSD1306 wrapper + screen renderer — 🟡 (AddInSelectScene pending, §6.3)
+│   │   ├── neopixel/       # SK6812 pure-Go SPI driver (3-bit WS encoding) — ✅
+│   │   └── state/          # device state machine — 🟡 (3 modes ✅ & tested & wired into main.go; deferred-commit + AddInSelect pending)
+│   ├── web/                # 🟡 shell ✅ (m8) + dashboard & dogs management ✅ (m9); feedings/history/charts pending
+│   │   ├── web.go          # Server, routes, methodOverride, dashboard handler, request logging, graceful Serve — ✅
+│   │   ├── dogs.go         # dogs CRUD handlers + photo upload validation/save — ✅ (9)
+│   │   ├── photos.go       # GET /photos/{id} serve with Clean + dir-prefix guard — ✅ (9)
+│   │   ├── templates.go    # embed + per-page parse + buffered render + score/time funcs — ✅
+│   │   ├── health.go       # /healthz JSON probe — ✅
+│   │   │   # (handlers live flat in the package root — web.go/dogs.go/photos.go — not a handlers/ subdir)
+│   │   ├── templates/      # *.html — base + dashboard + dogs + 404 ✅; partials ⬜ (10–13)
+│   │   ├── static/         # app.css ✅; htmx.min.js, fonts, paw icons ⬜
+│   │   └── chart/          # server-rendered SVG helpers — ⬜ (13)
+│   └── mdns/               # zeroconf wrapper — ✅ (soft-dependency advertiser)
+├── deploy/                 # ⬜ not started (no files yet)
 │   ├── pupcup.service      # systemd unit
 │   ├── deploy.sh           # cross-compile + rsync + restart
 │   └── bootstrap.sh        # first-time install on a fresh Pi (creates user, dirs, perms)
-├── migrations/             # SQL DDL files, numbered: 0001_init.sql, …
-├── test/
-│   ├── store_test.go
-│   ├── state_test.go
-│   └── handlers_test.go
+├── migrations/             # SQL DDL files, numbered: 0001_init.sql, … — 🟡 (0001 core tables ✅; feed_tags/feeding_tags + seeds pending)
 ├── go.mod
 ├── go.sum
 ├── README.md
@@ -99,22 +119,26 @@ pupcup/
 
 Public surface = `cmd/pupcup/main.go` + the `internal/` packages. Nothing in `pkg/`; this isn't a library.
 
-## 4. Dependencies (locked)
+## 4. Dependencies (locked) — 🟡
 
-| Module | Purpose |
-|---|---|
-| `periph.io/x/conn/v3` + `periph.io/x/host/v3` + `periph.io/x/devices/v3` | GPIO, I²C, SPI, SSD1306 driver |
-| `modernc.org/sqlite` | Pure-Go SQLite (no CGO) |
-| `github.com/grandcat/zeroconf` | mDNS advertising |
-| `gopkg.in/yaml.v3` | Config file parsing |
+> 🟡 **Partly completed** — `periph.io/*`, `modernc.org/sqlite`, `gopkg.in/yaml.v3`, and now `github.com/grandcat/zeroconf` (with `golang.org/x/net`/`miekg/dns` bumped to Go-1.25-compatible releases) are in `go.mod`. The web layer uses stdlib only (`net/http`, `html/template`, `embed`).
+
+| Module | Purpose | Status |
+|---|---|---|
+| `periph.io/x/conn/v3` + `periph.io/x/host/v3` + `periph.io/x/devices/v3` | GPIO, I²C, SPI, SSD1306 driver | ✅ in go.mod; used by drivers |
+| `modernc.org/sqlite` | Pure-Go SQLite (no CGO) | ✅ in go.mod; used by store |
+| `github.com/grandcat/zeroconf` | mDNS advertising | ✅ added (milestone 8) |
+| `gopkg.in/yaml.v3` | Config file parsing | ✅ in go.mod; used by config |
 
 Standard library: `log/slog` (logging), `html/template`, `net/http`, `embed` (templates + static), `database/sql`. No third-party HTTP framework, no router framework — `net/http` ServeMux (Go 1.22+ method matching) is sufficient.
 
-## 5. Data model
+## 5. Data model — 🟡
+
+### 5.1 Schema (DDL, simplified) — 🟡
+
+> 🟡 **Partly completed** — `dogs`, `feedings`, `snacks`, `illness_events`, `stress_events`, and `device_state` are created in `0001_init.sql` (✅). The live migration additionally carries `dogs.deleted_at` and extra `idx_*_ts` indexes not shown below. `feed_tags`/`feeding_tags`, the reserved Unspecified sentinel, and the seed data are **not yet added**.
 
 All times stored as **UTC** in the DB; presentation layer converts to `America/New_York`. SQLite enforces foreign keys (`PRAGMA foreign_keys = ON`).
-
-### 5.1 Schema (DDL, simplified)
 
 ```sql
 CREATE TABLE dogs (
@@ -139,6 +163,30 @@ CREATE TABLE feedings (
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_feedings_dog_ts ON feedings(dog_id, ts_utc) WHERE deleted_at IS NULL;
+
+-- Configurable household catalog of meal add-ins (shredded chicken, cheese, …).
+CREATE TABLE feed_tags (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL,
+    is_unspecified  INTEGER NOT NULL DEFAULT 0,  -- 1 = reserved "Other / name later" sentinel
+    archived_at     DATETIME,                    -- soft-hide from pickers without losing history
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+-- Names are stored Title-Cased and matched case-insensitively (NOCASE), so
+-- "cheese"/"Cheese" can't coexist; unique among live (non-archived) tags only.
+CREATE UNIQUE INDEX idx_feed_tags_name ON feed_tags(name COLLATE NOCASE) WHERE archived_at IS NULL;
+-- Exactly one reserved sentinel: device "Other" attaches this so the feeding is
+-- recorded immediately and surfaced on the web "needs a name" queue.
+INSERT INTO feed_tags (id, name, is_unspecified) VALUES (1, 'Unspecified add-in', 1);
+
+-- Many-to-many: a feeding carries zero or more add-in tags.
+CREATE TABLE feeding_tags (
+    feeding_id      INTEGER NOT NULL REFERENCES feedings(id) ON DELETE CASCADE,
+    tag_id          INTEGER NOT NULL REFERENCES feed_tags(id) ON DELETE RESTRICT,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (feeding_id, tag_id)
+);
+CREATE INDEX idx_feeding_tags_tag ON feeding_tags(tag_id);
 
 CREATE TABLE snacks (
     id              INTEGER PRIMARY KEY,
@@ -181,7 +229,9 @@ CREATE TABLE device_state (
 INSERT INTO device_state (id) VALUES (1);
 ```
 
-### 5.2 Domain types (Go)
+### 5.2 Domain types (Go) — 🟡
+
+> 🟡 **Partly completed** — every type below except `FeedTag` (and `Feeding.Tags`) is implemented in [internal/domain/domain.go](internal/domain/domain.go) with `Valid()`/`Validate()` helpers. `FeedTag` and the `Tags []FeedTag` field land with the add-in feature.
 
 ```go
 type Score string  // "full" | "partial" | "none"
@@ -190,55 +240,139 @@ type ButtonColor string // "green" | "yellow" | "red" | "blue"
 type Source string // "button" | "web"
 
 type Dog struct { ID int64; Name, AccentColor, PhotoPath string; SortOrder int }
-type Feeding struct { ID, DogID int64; TS time.Time; Kind FeedKind; Score Score; Specifics string; Source Source; DeletedAt, EditedAt *time.Time }
+type FeedTag struct { ID int64; Name string; IsUnspecified bool; ArchivedAt *time.Time }
+type Feeding struct { ID, DogID int64; TS time.Time; Kind FeedKind; Score Score; Specifics string; Source Source; Tags []FeedTag; DeletedAt, EditedAt *time.Time }
 type Snack struct { ID, DogID int64; TS time.Time; Specifics string; Source Source; DeletedAt, EditedAt *time.Time }
 type IllnessEvent struct { ID, DogID int64; Start time.Time; End *time.Time; Notes string }
 type StressEvent struct { ID int64; DogID *int64; Start time.Time; End *time.Time; Kind, Notes string }
 ```
 
-### 5.3 Migration strategy
+### 5.3 Migration strategy — 🟡
+
+> 🟡 **Partly completed** — the runner is done & working in [internal/store/store.go](internal/store/store.go): a `schema_migrations(version, applied_at)` table, lexical-ordered apply from the embedded `migrations.FS`, each migration in its own transaction, and a pre-migration file backup (adding a `wal_checkpoint(TRUNCATE)` before the copy is a pending refinement). The three dogs now seed at the **app layer** on first boot (✅, see below). **Outstanding:** the starter `feed_tags` and the Unspecified sentinel land with the `feed_tags` table in milestone 10.5.
 
 - One numbered SQL file per migration, applied in order on startup.
 - A `schema_migrations(version, applied_at)` table tracks applied versions.
-- Migrations are forward-only; a backup of the DB file is copied to `pupcup.sqlite.bak.YYYYMMDD-HHMMSS` before any migration runs.
-- v1 ships with a single `0001_init.sql` containing the schema above plus a default seed of three dogs (configurable in `bootstrap.sh`).
+- Migrations are forward-only; before any migration runs, a `PRAGMA wal_checkpoint(TRUNCATE)` folds the WAL into the main file and a backup is copied to `pupcup.sqlite.bak.YYYYMMDD-HHMMSS` (a single self-contained file).
+- v1 seed data lives in [internal/seed/seed_data.yaml](internal/seed/seed_data.yaml) — three dogs (Riley, Bentley, Bard) and eight starter `feed_tags` (Shredded Chicken, Cheese, Parmesan, Wet Food, Freeze-Dried Liver, Freeze-Dried Beef Patty, Milk, Rice). **Dogs are seeded at the app layer, not via a migration:** `main.go` calls into `internal/seed` on startup and inserts them only when the `dogs` table is empty (idempotent, so a re-deploy never duplicates). This deliberately keeps seed rows out of the always-run migration path — several `store`/`device/state` unit tests open a fresh in-memory DB and assume an empty `dogs` table, which a seed migration would break. Dog ids land at 1–3. The starter `feed_tags` and the reserved `Unspecified add-in` sentinel (`id = 1`, inserted **first** so tag ids are 1 + 2–9) are seeded via the add-in SQL migration in milestone 10.5 (no existing test assumes an empty `feed_tags` table — it doesn't exist yet); `seed.FeedTags()` exposes the same list so that migration derives from one source of truth.
 
-## 6. Hardware drivers
+### 5.4 Add-in tag ranking (per-dog) — ⬜
 
-All drivers are in `internal/device/<name>/`. Each exposes a small interface so tests can swap a fake.
+> ⬜ **Not started** — no `feed_tags` schema, `RankedTag` type, or `TagsForDog` method exists yet.
 
-### 6.1 Buttons (`device/buttons`)
+Both the device picker (§6.5) and the web tag-picker order candidate tags by **how
+often *this dog* has received each tag**, most-used first. The store exposes:
+
+```go
+// TagsForDog returns live (non-archived) tags ranked by this dog's usage.
+// Ordering: per-dog use count DESC, then global use count DESC, then name ASC.
+// The reserved Unspecified sentinel is excluded from the ranked body — callers
+// that need an "Other" affordance append it themselves.
+func (s *Store) TagsForDog(dogID int64) ([]RankedTag, error)
+```
+
+```sql
+SELECT t.id, t.name,
+       COUNT(ft.feeding_id) AS dog_uses
+FROM feed_tags t
+LEFT JOIN feeding_tags ft ON ft.tag_id = t.id
+LEFT JOIN feedings f ON f.id = ft.feeding_id
+     AND f.dog_id = :dog_id AND f.deleted_at IS NULL
+WHERE t.archived_at IS NULL AND t.is_unspecified = 0
+GROUP BY t.id
+ORDER BY dog_uses DESC, t.name ASC;
+```
+
+A never-used tag still appears (count 0, alphabetical), so a newly created tag is
+immediately selectable. Ranking is computed fresh per pick — there's no
+denormalized counter to keep in sync.
+
+Tag names are normalized to **Title Case** on create/rename (e.g. `shredded chicken` → `Shredded Chicken`) and deduplicated case-insensitively against live tags (the NOCASE unique index in §5.1), so the catalog stays clean whether a tag is added from the device, the web, or the seed file.
+
+## 6. Hardware drivers — 🟡
+
+All drivers are in `internal/device/<name>/`. Hardware bring-up is complete and
+these packages already exist as the **known-good baseline** — carry their shape
+forward rather than re-deriving it:
+
+- **Build-tag split per driver.** Each device package ships `<name>_linux.go`
+  (real, `//go:build linux`), `<name>_stub.go` (every other GOOS), a shared
+  interface file, and a `Fake`. This is why the project compiles and unit-tests
+  on a macOS laptop while the real drivers only build for the Pi. Don't tag a
+  whole feature `linux`-only.
+- **Host init.** Everything talks to hardware through `periph.io/x/conn/v3` +
+  `periph.io/x/devices/v3`. Call
+  [`hostinit.Init()`](internal/device/hostinit/hostinit.go) (wraps `host.Init`,
+  idempotent) once before opening any device.
+- **Lifecycle.** Drivers expose `Events() <-chan` (buffered, cap 16) and a
+  `Close()` guarded by `sync.Once` that closes a `stop` channel, `wg.Wait()`s the
+  watcher goroutines, then closes the event channel. Edge loops poll with
+  `WaitForEdge(50ms)` so `stop` stays responsive.
+- Each driver exposes a small interface plus a `Fake` so tests swap hardware out.
+
+### 6.1 Buttons (`device/buttons`) — 🟡
+
+> 🟡 **Partly completed** — press-only driver + `Fake` done and hardware-verified in [buttons_linux.go](internal/device/buttons/buttons_linux.go). The both-edge (press/release) upgrade below is **pending** — note it changes `ButtonEvent` (adds an `Action`), which is a breaking change to the `Fake`, the existing state-machine tests, and `cmd/hwprobe/buttons`.
 
 ```go
 type Driver interface {
     Events() <-chan ButtonEvent
     Close() error
 }
-type ButtonEvent struct { Color domain.ButtonColor; TS time.Time }
+type ButtonAction string // "press" | "release"
+type ButtonEvent struct { Color domain.ButtonColor; Action ButtonAction; TS time.Time }
 ```
 
-- Uses `periph.io/x/conn/v3/gpio` with `PullUp` and edge detection on falling edge.
-- Software debounce: 25 ms quiet period after a falling edge before next event accepted on the same pin.
+- Uses `periph.io/x/conn/v3/gpio` with `PullUp` and **both-edge** detection:
+  falling edge → `press` (re-read and confirm `Low` to reject bounce, per the
+  known-good [buttons_linux.go](internal/device/buttons/buttons_linux.go)
+  pattern); rising edge → `release` (re-read and confirm `High`).
+- **Why both edges (changed from press-only):** the add-in chord (§6.5) needs to
+  know a meal button is *still held* when Blue is tapped, and the deferred-commit
+  rule fires a feeding on meal-button **release**. Emitting press+release lets the
+  state machine track the live held-button set itself; the driver stays stateless
+  beyond debounce.
+- Software debounce: 25 ms quiet period after each edge before the next event on
+  the same pin is accepted.
 - One goroutine per button reading edges, plus a fan-in to the `Events()` channel.
 
-### 6.2 Rotary encoder (`device/rotary`)
+### 6.2 Rotary encoder (`device/rotary`) — ✅
+
+> ✅ **Completed** — table-based Buxton decoder, push-button, and short/long-press all implemented and hardware-verified in [rotary_linux.go](internal/device/rotary/rotary_linux.go); `Fake` present.
 
 ```go
 type Driver interface {
-    Events() <-chan RotaryEvent
+    Events() <-chan Event
     Close() error
 }
-type RotaryEvent struct {
-    Kind    RotaryEventKind  // "rotate_cw" | "rotate_ccw" | "press_short" | "press_long"
+type EventKind string  // "rotate_cw" | "rotate_ccw" | "press_short" | "press_long"
+type Event struct {
+    Kind    EventKind
     TS      time.Time
 }
 ```
 
-- Quadrature decoder using `periph.io` `gpio.WaitForEdge` on CLK; reads DT inside the handler to determine direction. Direction inversion config flag.
-- Debounce 5 ms on the rotary lines (some KY-040 modules are dirty without a hardware filter).
-- `SW`: short press = release within 1.5 s; long press = held ≥ 1.5 s. Long-press emits `press_long` exactly once on cross-threshold, no repeat.
+- **Table-based Buxton full-step decoder — a hard requirement, not a choice.**
+  This KY-040 emits a spurious reverse detent under the naive "sample DT on
+  CLK's falling edge" method, so that approach was tried and abandoned (commit
+  `c05a58e`). The proven driver
+  ([rotary_linux.go](internal/device/rotary/rotary_linux.go)) instead watches
+  **both** CLK and DT for any edge (`gpio.WaitForEdge`, 50 ms poll so `stop`
+  stays responsive), re-reads both lines into a 2-bit `(CLK<<1 | DT)` pinstate,
+  and steps a 7-state Gray-code table that emits exactly one event per detent
+  and falls back to `R_START` on any invalid (bounce) transition.
+- **Bounce rejection is structural**, so there is no time-based debounce on the
+  rotation lines — `rotary_debounce_ms` is retained in config for compatibility
+  but the decoder ignores it. A direction-inversion flag (`invert`) swaps CW/CCW
+  at emit time.
+- `SW`: short press = release after ≥ 25 ms and before the long-press threshold;
+  long press = held ≥ 1.5 s. Long-press emits `press_long` exactly once on
+  cross-threshold (while still held), and the subsequent release is silent — no
+  repeat, no trailing short-press.
 
-### 6.3 OLED (`device/oled`)
+### 6.3 OLED (`device/oled`) — 🟡
+
+> 🟡 **Partly completed** — driver, embedded fonts, and the `DogSelectorScene`/`LockedSummaryScene`/`SnackModeScene`/`SplashScene` renderers are implemented in [oled_linux.go](internal/device/oled/oled_linux.go) + [scenes.go](internal/device/oled/scenes.go) and hardware-verified. **Pending:** `AddInSelectScene`/`AddInChoice` (add-in feature). _(The scene signatures below include the `Now time.Time` field the renderer uses.)_
 
 ```go
 type Renderer interface {
@@ -246,18 +380,31 @@ type Renderer interface {
     Close() error
 }
 type Scene interface { isScene() }   // sealed
-type DogSelectorScene struct { Dog domain.Dog; Index, Total int }
-type LockedSummaryScene struct { Entries []SummaryEntry; LockedUntil time.Time }
+type DogSelectorScene struct { Dog domain.Dog; Index, Total int; Now time.Time }
+type LockedSummaryScene struct { Entries []SummaryEntry; LockedUntil time.Time; Now time.Time }
 type SnackModeScene struct { Dog domain.Dog; Remaining time.Duration; AlreadyRecorded []int64 }
-type SplashScene struct { Message string }
+type AddInSelectScene struct { Dog domain.Dog; Score domain.Score; Choices []AddInChoice; Index int }
+type SplashScene struct { Message string; Now time.Time }
+// SummaryEntry: DogName string; Score domain.Score; HasSnack bool (the * snack marker, §6.5).
+
+// AddInChoice is one row in the add-in picker. The final row is always the
+// synthetic "Other (name later)" entry (IsOther = true) that attaches the
+// reserved Unspecified sentinel tag.
+type AddInChoice struct { TagID int64; Label string; IsOther bool }
 ```
 
-- Uses `periph.io/x/devices/v3/ssd1306` over I²C (`/dev/i2c-1`, address `0x3C`).
+- Uses `periph.io/x/devices/v3/ssd1306` over I²C — opens the bus by number
+  (`i2creg.Open("1")`) and constructs via `ssd1306.NewI2C`. Note: that
+  constructor **hardcodes address `0x3C`**; the `oled_addr` config value is
+  validated on load but not consumed by the driver, so a `0x3D`-jumpered panel
+  would need a code change, not just config.
 - 128×64 framebuffer; full-redraw on scene change, partial-redraw for clock ticks.
 - Embedded bitmap fonts (small, medium, large) compiled into the binary via `//go:embed`. "Large" = 24-px tall sans for dog names; "small" = 8-px for status.
 - Anti-burn-in: invert pixels every 24 hours; periodically nudge content position by 1 px.
 
-### 6.4 NeoPixel (`device/neopixel`) — custom pure-Go SPI driver
+### 6.4 NeoPixel (`device/neopixel`) — custom pure-Go SPI driver — ✅
+
+> ✅ **Completed** — pure-Go SPI 3-bit-encoding driver + `Fake` implemented in [neopixel_linux.go](internal/device/neopixel/neopixel_linux.go), unit-tested, and hardware-verified through the level shifter.
 
 ```go
 type Strip interface {
@@ -270,37 +417,116 @@ type Color struct { R, G, B uint8 }   // RGB; SK6812RGBW handled with a white ch
 ```
 
 - Open `/dev/spidev0.0` via `periph.io/x/conn/v3/spi/spireg` at **2.4 MHz** clock.
-- Encode each WS data bit as **3 SPI bits**: `1` → `0b110`, `0` → `0b100`. At 2.4 MHz this yields the canonical 800 kHz / 1.25 µs WS timing within tolerance.
+- Encode each WS data bit as **3 SPI bits**: `1` → `0b110`, `0` → `0b100`. At 2.4 MHz this yields the canonical 800 kHz / 1.25 µs WS timing within tolerance. Pixels are emitted in **G-R-B byte order, MSB first** (the SK6812/WS2812 wire order) — a swapped order is the usual cause of the "green when you expected red" symptom in the §8.6 bring-up test.
 - Per-frame buffer = `nLEDs × 24 bits × 3 SPI bits / 8 bits per byte = nLEDs × 9` bytes (72 bytes for 8 LEDs). Plus a 50 µs reset gap (≥ 30 zero bytes at 2.4 MHz).
 - The driver pre-allocates the buffer in `NewStrip(n)` to avoid per-frame allocations.
 - Animation goroutine ticks at 30 Hz only when an animation is active (idle-off state writes a blank frame and stops ticking).
 
-### 6.5 Device state machine (`device/state`)
+### 6.5 Device state machine (`device/state`) — 🟡
+
+> 🟡 **Design resolved (2026-06-02); implementation advancing.** `Idle`, `LockedSummary`, and `SnackMode` are implemented, unit-tested, and **now constructed and run by `cmd/pupcup/main.go`** (milestone 7.5 — the device loop runs end-to-end). Covered: dog scroll, meal record + auto-advance, all-dogs-fed lock, the **15-minute grace-timeout lock path** (locks a partial session; un-fed dogs left unrecorded), **last-meal-timed expiry** (`locked_until = last_meal_ts + meal_lock`), the **snack marker** (`SummaryEntry.HasSnack`, queried from the snacks table per render so web-added snacks also show), persistence/rehydration across restart, and the long-press override. **Outstanding (milestone 10.5):** the deferred-commit meal flow, the add-in chord (both directions) + `AddInSelect` state, Blue long-press in `LockedSummary` (the live code still enters SnackMode on a plain Blue tap — see the TODO in `handleLockedButton`; it depends on the both-edge buttons upgrade), and `EditOverride` naming.
 
 States:
-- `Idle` — OLED shows the per-dog selector page; rotary scrolls through dogs; meal buttons (G/Y/R) record a feeding for the selected dog and advance to next dog automatically.
-- `LockedSummary` — entered when all dogs have a feeding within the current "meal window" (or any meal recorded triggers a 4-h lock by default); OLED shows the per-dog summary list; LED bar glows green; meal buttons are ignored.
-- `SnackMode` — entered by tap of Blue while in Idle, or **press-and-hold (≥ 1.5 s) of Blue** while in LockedSummary; OLED shows "SNACK — pick dog"; rotary picks a dog; tapping Blue records a snack for the selected dog. Exits automatically on either (a) all dogs recorded, or (b) 60-second inactivity, returning to the prior state.
-- `EditOverride` — entered by long-press of rotary SW while in LockedSummary; clears `device_state.locked_until_utc`; immediately transitions back to Idle.
+- **`Idle`** — OLED shows the per-dog selector; rotary scrolls dogs (wraps at the
+  ends). Meal buttons (G/Y/R) use a **deferred commit**, and Blue is disambiguated
+  by whether a meal button is involved:
+  - **Meal-button press** opens an in-memory *pending feeding* for the **selected
+    dog** (score = button color). Nothing is written yet. **While a meal button is
+    held, rotary input is ignored** so the pending stays bound to the dog selected
+    at press time (resolution 4a).
+  - **A second meal button pressed while one is held → last wins:** the pending
+    feeding's score becomes the most-recently-pressed color (4b).
+  - **Meal-button release with no Blue involved** → commit the pending feeding as a
+    plain standard meal, advance to the next un-fed dog, and re-check the lock
+    condition below. Latency is measured release-to-confirmation, so a normal quick
+    tap still feels instant.
+  - **Add-in chord (either order)** → transition to `AddInSelect` carrying the
+    pending feeding: *hold a meal button, then tap Blue* **or** *hold Blue, then
+    tap a meal button* (the symmetric reverse chord — both open the add-in picker,
+    4c). The pending feeding's dog = selected dog, score = the meal color.
+  - **Blue alone** (a Blue press→release with no meal button pressed during the
+    hold) → enters `SnackMode`.
+- **`AddInSelect`** — OLED shows the per-dog-ranked add-in picker (§5.4) for the
+  pending feeding via `AddInSelectScene`, plus a trailing **"Other (name later)"**
+  row. Rotary scrolls; **rotary SW short-press selects** the highlighted choice:
+  - a real tag → commit the pending feeding with that one tag attached;
+  - "Other" → commit with the reserved *Unspecified* sentinel attached (surfaced on
+    the web "needs a name" queue);
+  - inactivity (`addin_idle_seconds`, default 30) → commit the pending feeding
+    **untagged** as a standard meal, so a walk-away never loses the meal record.
+  In every case the machine then advances to the next un-fed dog and **re-checks
+  the lock condition** (resolution 4d). One tag per chord by design — for multiple
+  add-ins, edit on the web.
+- **`LockedSummary`** — entered when the current meal completes. **Completion rule
+  (resolutions 1 & 2):**
+  - the moment **all dogs have a recorded feeding** in the current session → lock
+    immediately; **otherwise**
+  - a **grace timer** (`meal_complete_grace_minutes`, default 15), **reset on each
+    new feeding**, runs; if it elapses with at least one dog fed and the meal still
+    incomplete → lock with the partial session and **leave the un-fed dog(s) with
+    no record** (they are added retroactively on the web).
+  - In both cases the lock **expiry is timed from the last recorded meal**:
+    `locked_until = last_meal_ts + meal_lock_minutes` (240 min). There is no
+    separate "meal window" — the grace timer subsumes it (resolution 2).
+  - OLED shows the per-dog summary (fed dogs badged G/Y/R, un-fed dogs "–", plus a
+    `*` snack marker per the note below); LED bar glows solid green; meal buttons
+    are ignored.
+- **`SnackMode`** — entered by **Blue alone in Idle** (above), or by
+  **press-and-hold of Blue ≥ `long_press_ms`** while in LockedSummary. **Blue
+  long-press is detected on the 1-second tick** (resolution 3): the machine
+  timestamps Blue's press from the §6.1 both-edge event and, on each tick, if Blue
+  is still held past the threshold while in LockedSummary, enters SnackMode once;
+  the eventual Blue release is then consumed silently (no trailing snack). OLED
+  shows "SNACK — pick dog"; rotary picks a dog; tapping Blue records a snack. Exits
+  on all-dogs-recorded or `snack_mode_idle_seconds` (60) inactivity, returning to
+  the prior state.
+- **`EditOverride`** — long-press of rotary SW while in LockedSummary; clears
+  `device_state.locked_until_utc`; immediately returns to Idle.
 
-State transitions emit `domain.LockChanged` events and persist to `device_state`. On startup, the state is reconstructed from `device_state` so a reboot during the lock window resumes correctly.
+**Blue disambiguation:** Blue alone (no meal button pressed during its hold) is the
+snack button; Blue together with a meal button — pressed in **either order** — is
+the add-in modifier. The held-button set the machine tracks from the §6.1
+press/release events is what tells the two apart, so there's no timing race.
 
-## 7. Web layer
+**Snack marker (v1):** the LockedSummary list shows a `*` next to any dog that also
+has a snack recorded since the current lock began (`SummaryEntry.HasSnack`,
+populated from the snacks table — shipped in v1 per the resolved clarifications).
 
-### 7.1 Routes
+State transitions emit `domain.LockChanged` events and persist to `device_state`.
+The pending feeding, the in-progress meal session, and the grace timer are
+**in-memory only** and are not persisted: a reboot mid-meal drops them (any
+already-recorded feedings remain in the DB and on the web; the user re-taps those
+not yet recorded). On startup the lock state is reconstructed from `device_state`,
+so a reboot during the lock window resumes correctly.
+
+## 7. Web layer — 🟡
+
+> 🟡 **Shell + dashboard + dogs management done (milestones 8–9)** — `internal/web` serves the app shell (a `net/http` ServeMux router, an embedded `html/template` base layout + top-nav, embedded static assets, a custom 404, the `/healthz` probe, request-logging middleware with `component=web.handler`/`latency_ms`, and a 5 s graceful-shutdown `Serve`), the **dashboard** (`GET /` — per-dog "fed today / last fed + score" for the local day), and **dogs management** (`/dogs` list/create/update with name·color·photo, soft-delete, and `GET /photos/{id}` photo serving with a Clean + dir-prefix guard; uploads validated to JPEG/PNG · ≤`photo_max_kb` · ≤`photo_max_px`). Plain-form `DELETE`/`PATCH` work via a `methodOverride` middleware, so the app is functional without JavaScript. The feeding/snack/illness/stress/history/chart pages in §7.1 below are **not built yet** (milestones 10–13). The web layer is plain **request/response** — it does not subscribe to the event bus or push live updates in v1 (resolution 6); pages reflect state on load/refresh, and `/healthz` reads the store on demand.
+
+### 7.1 Routes — 🟡
+
+> Live now (milestones 8–9): `GET /` (the real **dashboard** — per-dog "fed today / last fed + score" status for the current local day), the **dogs-management** set — `GET /dogs`, `POST /dogs` (create), `POST /dogs/{id}` (update name·color·photo, multipart), `DELETE /dogs/{id}` (soft-delete, store-guarded against deleting a dog with feeding history), `GET /photos/{id}` (serve from `photo_dir` via `http.ServeFile` with a Clean + dir-prefix guard; 404 if none) — plus `GET /healthz`, `GET /static/*` (embedded), and the custom 404 catch-all. **Photo uploads** are validated to JPEG/PNG, ≤`photo_max_kb`, ≤`photo_max_px` on the largest edge, rejected otherwise. The few non-GET/POST verbs (`DELETE`/`PATCH`) are reachable from plain HTML forms via a `methodOverride` middleware (hidden `_method` field), so the app works without JavaScript; HTMX issues the real verbs in milestone 10. The remaining rows below land in milestones 10–13.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Dashboard: today's per-dog status, "fed?" indicators, quick-add buttons |
+| GET | `/` | Dashboard: per-dog "last fed at HH:MM + score" status, quick-add buttons |
 | GET | `/dogs` | List + manage dogs |
 | POST | `/dogs` | Create a dog |
 | GET | `/dogs/{id}` | Per-dog detail: history table + analytics chart |
-| POST | `/dogs/{id}` | Update name / color / photo |
+| POST | `/dogs/{id}` | Update name / color / photo (multipart; JPEG/PNG, ≤150 KB, ≤320×320, rejected if larger) |
 | DELETE | `/dogs/{id}` | Soft-delete (only when zero non-deleted feedings) |
+| GET | `/photos/{id}` | Serve a dog's photo from photo_dir via `http.ServeFile` (Clean + dir-prefix guard); 404 if none |
+| GET | `/feedings` | Recent feedings — reverse-chronological list optimized for quick add-in tagging (inline tag chips + picker) |
 | POST | `/feedings` | Add (HTMX) — supports retroactive timestamp |
-| GET | `/feedings/{id}/edit` | Edit form (HTMX dialog) |
-| PATCH | `/feedings/{id}` | Update |
+| GET | `/feedings/{id}/edit` | Edit form (HTMX dialog) — includes the add-in tag multiselect + create-on-the-fly field |
+| PATCH | `/feedings/{id}` | Update (incl. full set of attached tags) |
 | DELETE | `/feedings/{id}` | Soft-delete |
+| POST | `/feedings/{id}/tags` | Attach a tag (HTMX chip add); body may name a new tag, created if absent |
+| DELETE | `/feedings/{id}/tags/{tagID}` | Detach a tag (HTMX chip remove) |
+| GET | `/tags` | Manage the add-in tag catalog |
+| POST | `/tags` | Create a tag |
+| PATCH | `/tags/{id}` | Rename a tag |
+| DELETE | `/tags/{id}` | Archive a tag (soft; preserves history on past feedings) |
 | POST | `/snacks` | Same shape as feedings |
 | PATCH | `/snacks/{id}` | |
 | DELETE | `/snacks/{id}` | |
@@ -314,21 +540,26 @@ State transitions emit `domain.LockChanged` events and persist to `device_state`
 | GET | `/healthz` | JSON liveness probe (used by systemd watchdog and future Home Assistant) |
 | GET | `/static/*` | Embedded static assets via `embed.FS` |
 
-### 7.2 Templates
+### 7.2 Templates — 🟡
+
+> Base layout (now with a Today/Dogs top-nav) plus `dashboard.html`, `dogs.html`, and `404.html` are embedded and rendering (`home.html` was replaced by `dashboard.html` in milestone 9). Each page is parsed together with `base.html` into its own template set so the `{{define "content"}}` blocks don't collide; `templates.render` executes into a buffer first so a template error becomes a 500 rather than a half-written 200. Helper funcs registered: `fmtTime`/`fmtDate`/`fmtClock`, `scoreLabel`, `scoreClass`. The partials below arrive with their pages in 10–13.
 
 - `internal/web/templates/` is embedded via `//go:embed` so no template files are deployed alongside the binary.
 - Layout: `base.html` defines the page chrome; pages extend with `{{define "content"}}…{{end}}`.
-- Partials: `feeding_row.html`, `dog_card.html`, `chart_eating_quality.html`, `confirm_modal.html` — these are HTMX swap targets.
+- Partials: `feeding_row.html`, `dog_card.html`, `chart_eating_quality.html`, `confirm_modal.html`, `tag_chips.html` (the attached-tag chip list + add control), `tag_picker.html` (per-dog-ranked suggestions) — these are HTMX swap targets.
+- The recent-feedings page (`GET /feedings`) flags any feeding still carrying the *Unspecified* sentinel with a "name this add-in" affordance, so device-side "Other" selections get resolved on the web in one click.
 - Helper funcs registered in a single `funcMap`: `formatTime`, `formatDate`, `pawIcon`, `accentColor`, `score…` etc.
 
-### 7.3 Charts (server-side SVG)
+### 7.3 Charts (server-side SVG) — ⬜
 
 - Chart helper in `internal/web/chart/` produces SVG strings. No JS chart libs.
 - v1 charts:
   - **Stacked bar over time** — full / partial / none counts per day for a window (7, 30, 90 days). Used on each dog detail page and on the dashboard summary card.
 - The helper is intentionally minimal (rectangles + text + a few axes); future charts (heatmaps, scatter) live in the same package.
 
-### 7.4 Style
+### 7.4 Style — 🟡
+
+> The embedded `app.css` is in place with the palette, 16-px rounded card/chip shapes, header/footer chrome, the top-nav, the **dashboard status grid** (responsive `auto-fill` cards with score-colored badges/dots + avatars), and the **dogs-management** UI (add/edit-via-`<details>`/delete forms, color picker + suggested-palette hint, flash banners, buttons). **Outstanding:** the self-hosted Quicksand woff2 (the shell falls back to a warm system/`ui-rounded` stack for now) and the deeper-page styling that arrives with milestones 10–13.
 
 - Single hand-written CSS file `app.css` (~3 KB compressed) embedded.
 - Palette:
@@ -340,16 +571,20 @@ State transitions emit `domain.LockChanged` events and persist to `device_state`
 - Component shapes: 16-px rounded corners, 1-px borders, soft drop shadows. Generous padding. Paw-print accent SVG used as bullet/divider/empty-state.
 - Density: dashboard prioritizes "today" cards above the fold; deeper pages use a single column at ≤ 720 px max-width and a two-column dashboard grid above 720 px.
 
-### 7.5 mDNS
+### 7.5 mDNS — ✅
 
 - `internal/mdns/` wraps `grandcat/zeroconf` to advertise:
   - Service: `_http._tcp`
-  - Hostname: `pupcup.local`
-  - Port: 80
+  - Instance/hostname: from `mdns_hostname` (default `pupcup`, resolvable as `pupcup.local`)
+  - Port: derived from `listen` via `mdns.PortFromListen` (so dev on `:8080` advertises the right port)
   - TXT record: `version=<build>`
-- Relies on the on-Pi `avahi-daemon` for the `.local` resolver from non-Apple clients. The dashboard prints the IP at the top as a fallback for clients (some Android setups) where mDNS doesn't resolve.
+- Registration is a **soft dependency**: `Advertiser.Run(ctx)` logs and continues if registration fails (common on a dev laptop with no multicast permission), then blocks on `ctx` and withdraws the advertisement on shutdown — so mDNS trouble never takes down the daemon.
+- Relies on the on-Pi `avahi-daemon` for the `.local` resolver from non-Apple clients. The page header prints the advertised host (`<hostname>.local`) and the dashboard will print the IP at the top as a fallback for clients (some Android setups) where mDNS doesn't resolve.
+- Note: `grandcat/zeroconf` v1.0.0 pins an ancient `golang.org/x/net`/`miekg/dns` that fails to link under Go 1.25 (`syscall.recvmsg`); both are bumped to current releases in `go.mod`.
 
-## 8. Configuration
+## 8. Configuration — 🟡
+
+> 🟡 **Mostly completed** — the loader, `PUPCUP_*` env overrides, fail-fast validation, and the accessors are implemented in [config.go](internal/config/config.go), **including** `meal_complete_grace_minutes` (`MealCompleteGrace()`), `addin_idle_seconds` (`AddInIdle()`), and `photo_max_kb`/`photo_max_px`, plus `ButtonDebounce()`/`RotaryDebounce()` helpers. **Outstanding:** only the shipped `deploy/config.example.yaml` file (deferred to milestone 14).
 
 YAML at `/etc/pupcup/config.yaml`, with environment variable overrides (prefix `PUPCUP_`). The shipped default:
 
@@ -365,28 +600,48 @@ i2c_bus: 1
 oled_addr: 0x3C
 neopixel_count: 8
 button_pins:
-  green: 5
-  yellow: 6
-  red: 13
-  blue: 19
+  green: 21
+  yellow: 16
+  red: 12
+  blue: 20
 rotary_pins:
   clk: 17
   dt: 27
   sw: 22
 button_debounce_ms: 25
-rotary_debounce_ms: 5
+rotary_debounce_ms: 5    # retained for config compat; UNUSED by the rotary
+                         # driver — the Buxton decoder rejects bounce structurally
 long_press_ms: 1500
 
 # Behavior
 meal_lock_minutes: 240
+meal_complete_grace_minutes: 15  # after the first dog is fed, wait this long for
+                                 # the rest before locking with a partial meal
+                                 # (un-fed dogs get no record); reset by each feeding
 snack_mode_idle_seconds: 60
+addin_idle_seconds: 30    # AddInSelect walk-away timeout; commits the pending
+                          # meal untagged rather than losing it
 default_feed_kind: standard
 mdns_hostname: pupcup
+
+# Web / photos
+photo_max_kb: 150         # reject dog-photo uploads larger than this
+photo_max_px: 320         # reject uploads wider/taller than this (no downscaler in v1)
 ```
+
+> Implementation note: these fields are implemented on the [config.Config](internal/config/config.go)
+> struct — `meal_complete_grace_minutes` (`MealCompleteGrace()`, default 15, `>= 0`;
+> 0 = lock as soon as the next 1 s tick sees the meal still incomplete),
+> `addin_idle_seconds` (`AddInIdle()`, default 30, `>= 1`), and
+> `photo_max_kb` / `photo_max_px` (defaults 150 / 320, `>= 1`). For laptop dev
+> without root, override the privileged port and the production DB path:
+> `PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite`.
 
 Validated on load; missing required values fail fast with a clear error message.
 
-## 9. Logging and observability
+## 9. Logging and observability — 🟡
+
+> 🟡 **Partly completed** — structured `log/slog` JSON to stdout is wired in [main.go](cmd/pupcup/main.go) with a `version` field, and `sd_notify` readiness + `WatchdogSec` heartbeats are implemented in [internal/systemd](internal/systemd/notify.go) and wired into the daemon (a safe no-op off systemd). The `/healthz` endpoint is **now implemented** ([internal/web/health.go](internal/web/health.go)) returning the JSON below, and the web request-logging middleware emits `component=web.handler` + `latency_ms`. **Outstanding:** extending the `latency_ms` convention to the remaining handlers as they're built.
 
 - Structured logs via `log/slog` JSON to stdout — captured by journald.
 - Log fields: `time`, `level`, `msg`, `component` (e.g. `device.buttons`, `web.handler`, `store`), plus context-specific (e.g. `dog_id`, `score`, `latency_ms`).
@@ -405,9 +660,15 @@ Validated on load; missing required values fail fast with a clear error message.
   ```
 - systemd `WatchdogSec=60` with `sd_notify` heartbeats from the main loop.
 
-## 10. Deployment
+## 10. Deployment — ⬜
 
-### 10.1 Cross-compile + ship
+> ⬜ **Not started** — `deploy/` does not exist yet (no `deploy.sh`, `bootstrap.sh`, `pupcup.service`, or `config.example.yaml`). The README quick-start was updated to defer these to this milestone (laptop dev runs with `PUPCUP_LISTEN=:8080`).
+
+### 10.0 Provisioning prerequisites — ✅ (OS-level, set at bring-up)
+
+> The app trusts the **system clock** (`time.Now()`) and never reads the DS1307 directly. Correct timestamps with **no network** depend on the OS image having the **`rtc-ds1307` device-tree overlay enabled and `hwclock` syncing on boot** — already configured during hardware bring-up (the RTC is kernel-claimed; it shows `UU` on an I²C scan). See [pupcup_hardware_build.md](pupcup_hardware_build.md). If a future re-image drops the overlay, offline feedings carry a wrong time until NTP recovers — re-enable the overlay rather than adding app-side clock handling.
+
+### 10.1 Cross-compile + ship — ⬜
 
 `deploy/deploy.sh`:
 ```sh
@@ -421,7 +682,7 @@ rsync -avz --progress build/pupcup "$TARGET:/tmp/pupcup.new"
 ssh "$TARGET" 'sudo install -m 0755 /tmp/pupcup.new /opt/pupcup/pupcup && sudo systemctl restart pupcup && sudo systemctl status pupcup --no-pager'
 ```
 
-### 10.2 systemd unit
+### 10.2 systemd unit — ⬜
 
 `/etc/systemd/system/pupcup.service`:
 ```ini
@@ -453,7 +714,9 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 ```
 
-### 10.3 First-time bootstrap
+> First-deploy check: the unit relies on `SupplementaryGroups=gpio i2c spi` for hardware access (no `PrivateDevices`, so `/dev` stays visible). After install, confirm the device nodes are reachable as the `pupcup` user — e.g. `sudo -u pupcup test -r /dev/i2c-1 && sudo -u pupcup test -r /dev/gpiochip0 && sudo -u pupcup test -r /dev/spidev0.0`.
+
+### 10.3 First-time bootstrap — ⬜
 
 `deploy/bootstrap.sh` runs once on a fresh Pi:
 ```sh
@@ -468,42 +731,53 @@ sudo systemctl enable pupcup
 
 After bootstrap, regular updates use `deploy.sh` only.
 
-## 11. Testing strategy
+## 11. Testing strategy — 🟡
 
-### 11.1 Unit tests (laptop, fast)
-- `store/`: open an in-memory SQLite, run migrations, exercise CRUD + soft-delete + filters.
-- `domain/` and `device/state/`: pure-Go state-machine tests with a fake clock and fake bus.
-- `web/handlers/`: spin up `httptest.Server` against the in-memory store; assert HTML fragments returned by HTMX endpoints.
+### 11.1 Unit tests (laptop, fast) — 🟡
+
+> 🟡 **Partly completed** — `store`, `device/state` (incl. grace-timeout partial lock, last-meal-timed expiry, grace reset per feeding), `domain`, `config`, `eventbus`, `neopixel`, `seed`, and `systemd` have passing tests; `go test ./...` is green and fast. **Outstanding:** all `web/handlers` tests (web unbuilt) and the add-in coverage listed below.
+
+- `store/`: open an in-memory SQLite, run migrations, exercise CRUD + soft-delete + filters. Add-in coverage: tag create/rename/archive (names normalized to Title Case, deduped case-insensitively), attach/detach on a feeding, `TagsForDog` per-dog ranking order (used > unused, count desc, alphabetical tiebreak), and that archiving a tag preserves it on historical feedings.
+- `domain/` and `device/state/`: pure-Go state-machine tests with a fake clock and fake bus. Add-in coverage: deferred commit (press→release with no Blue commits a plain meal), the hold-meal + tap-Blue chord enters `AddInSelect`, rotary-select attaches the tag and advances, "Other" attaches the Unspecified sentinel, and the `addin_idle_seconds` timeout commits untagged. Assert Blue-alone (no meal held) still routes to `SnackMode`. Also cover: the symmetric reverse chord (hold Blue + tap meal) enters `AddInSelect`; last-wins on overlapping meal buttons; the 15-min grace timeout locks with a partial session (un-fed dogs unrecorded) and times expiry from the last meal; Blue long-press in LockedSummary enters SnackMode on the tick; and the all-fed re-check fires after an `AddInSelect` commit.
+- `web/handlers/`: spin up `httptest.Server` against the in-memory store; assert HTML fragments returned by HTMX endpoints, including tag chip add/remove and the "name this add-in" affordance on Unspecified-tagged feedings.
 - Goal: `go test ./...` runs in < 5 s.
 
-### 11.2 Hardware integration tests (on-device)
-- The `cmd/hwprobe/` tools (one per peripheral) double as integration tests during build. Re-run them after any wiring change.
-- Optional: `cmd/hwprobe/all` runs through every probe in sequence.
+### 11.2 Hardware integration tests (on-device) — ✅
 
-### 11.3 End-to-end UAT (manual checklist)
+> ✅ **Completed** — all four `cmd/hwprobe` tools exist and every peripheral is confirmed working on the board.
+
+- The `cmd/hwprobe/` tools (one per peripheral: `buttons`, `neopixel`, `oled`, `rotary`) double as integration tests during build. Re-run them after any wiring change.
+- A combined `cmd/hwprobe/all` that runs every probe in sequence could be added later; today each probe is run individually.
+
+### 11.3 End-to-end UAT (manual checklist) — ⬜
+
 See § 13.
 
 ## 12. Implementation milestones
 
-Suggested execution order. Each milestone ends in a runnable, demonstrable artifact.
+Suggested execution order. Each milestone ends in a runnable, demonstrable artifact. **This list is the primary progress ledger — update the status marker on each item as it lands, and refresh the Progress Summary above when a major component completes.**
 
-1. **OS + hardware probes** — Pi provisioned per the hardware doc; `hwprobe` programs verify each peripheral.
-2. **OLED hello** — `device/oled` package + a "Hello PupCup" splash on boot.
-3. **Button + rotary events** — `device/buttons` and `device/rotary` packages emit events on stdout.
-4. **NeoPixel pure-Go driver** — solid colors, walking pixel, smooth fade. Verifies SPI 3-bit encoding and level shifter.
-5. **SQLite store** — schema, migrations, CRUD, soft-delete, in-memory test DB.
-6. **Domain types + event bus** — typed pub/sub.
-7. **Device state machine** — wires hardware events to bus + store + OLED scenes + LED states. End of this milestone: pressing buttons records feedings; the OLED reflects state; LEDs glow green for 4 hours after a meal.
-8. **Web shell** — `net/http` server, base template, 404, healthz, embedded statics, mDNS.
-9. **Dashboard + dogs management** — list of today's status, manage dogs (name/color/photo).
-10. **Feedings & snacks CRUD** — add via HTMX, retroactive timestamp picker, edit, soft-delete with confirm.
-11. **Illness + stress events** — date-range form, "ongoing" toggle, set-end action.
-12. **History page** — unified, filterable timeline.
-13. **Per-dog detail + chart** — eating-quality stacked-bar SVG.
-14. **systemd unit + deploy.sh + bootstrap.sh** — production install on the Pi.
-15. **UAT pass + polish** — run the checklist; fix any rough edges; finalize the README.
+1. ✅ **OS + hardware probes** — Pi provisioned per the hardware doc; `hwprobe` programs verify each peripheral. _(Hardware confirmed working; all four probes present.)_
+2. ✅ **OLED hello** — `device/oled` package + a "Hello PupCup" splash on boot. _(Package, fonts, renderer, and `SplashScene` done; the on-boot splash itself lands when `main.go` is wired.)_
+3. ✅ **Button + rotary events** — `device/buttons` and `device/rotary` packages emit events on stdout. _(Both drivers + probes done; buttons are press-only pending the §6.1 both-edge upgrade.)_
+4. ✅ **NeoPixel pure-Go driver** — solid colors, walking pixel, smooth fade. Verifies SPI 3-bit encoding and level shifter. _(Done & hardware-verified.)_
+5. ✅ **SQLite store** — schema, migrations, CRUD, soft-delete, in-memory test DB. _(Done; tag store methods arrive in 10.5.)_
+6. ✅ **Domain types + event bus** — typed pub/sub. _(Done; `FeedTag`/`Feeding.Tags` arrive in 10.5.)_
+7. ✅ **Device state machine** — wires hardware events to bus + store + OLED scenes + LED states. End of this milestone: pressing buttons records feedings; the OLED reflects state; LEDs glow green for 4 hours after a meal. _(Idle/LockedSummary/SnackMode implemented, unit-tested, and now constructed/run by `cmd/pupcup/main.go` via milestone 7.5. Deferred-commit + `AddInSelect` are added in 10.5; on-device behavior is confirmed in the §13 UAT.)_
+7.5. ✅ **Wire the daemon (`main.go`)** — constructs config→store→bus→clock, the real drivers on the Pi (Fakes elsewhere via the build-tag split), and the device state machine; runs the loop with graceful shutdown (SIGINT/SIGTERM) and `sd_notify` readiness + watchdog (`internal/systemd`). Folds in the resolved lock-model refinements (15-min grace timeout, last-meal-timed expiry, snack marker) and idempotent first-boot dog seeding (`internal/seed`). _(Done: builds/vets/tests green, cross-compiles to linux/arm64, and smoke-runs on the laptop — seeds 3 dogs once, no re-seed on restart, clean SIGTERM shutdown. On-device end-to-end behavior is verified in the §13 UAT.)_
+8. ✅ **Web shell** — `net/http` server, base template, 404, healthz, embedded statics, mDNS. _(Done: `internal/web` (router, embedded base layout + `app.css`, custom 404, `/healthz`, request logging) and `internal/mdns` (soft-dependency `_http._tcp` advertiser) run alongside the device loop in `main.go` with graceful shutdown. Builds/vets/tests green, arm64 cross-compiles, and a live laptop smoke test served healthz/home/static/404 and shut down cleanly on SIGTERM.)_
+9. ✅ **Dashboard + dogs management** — list of today's status, manage dogs (name/color/photo). _(Done: `GET /` renders per-dog "fed today / last fed + score" status for the local day; `internal/web/dogs.go` + `photos.go` add the full dogs CRUD — create/update (name·color·photo, multipart), soft-delete (store-guarded against history), and `GET /photos/{id}` served from `photo_dir` with a Clean + dir-prefix guard. Photo uploads validated to JPEG/PNG · ≤`photo_max_kb` · ≤`photo_max_px`. Plain-form DELETE via a `methodOverride` middleware (no JS). `Store.ActiveEntryCounts` backs the "can't delete — has history" affordance. Builds/vets/tests green (new dashboard/dogs/photo/method-override/traversal tests), arm64 cross-compiles, and a live laptop smoke served the dashboard, created/updated/deleted dogs, round-tripped a photo upload→`/photos/{id}` (byte-exact, `image/png`), rejected an invalid color, and shut down cleanly on SIGTERM.)_
+10. ⬜ **Feedings & snacks CRUD** — add via HTMX, retroactive timestamp picker, edit, soft-delete with confirm. _(Store layer ready; web surfaces not built.)_
+10.5. ⬜ **Add-in tags** — `feed_tags`/`feeding_tags` migration + store methods (incl. `TagsForDog`); tag catalog page (`/tags`); recent-feedings page (`/feedings`) and feeding edit dialog with chip add/remove; device-side deferred-commit + `AddInSelect` state, `AddInSelectScene` rendering, and the both-edge buttons driver upgrade that the chord depends on. (Depends on milestone 7 for the device state machine and milestone 10 for the web feeding surfaces.) End of this milestone: holding a meal button and tapping Blue tags a meal from the device, and that tag is visible/editable on the web.
+11. ⬜ **Illness + stress events** — date-range form, "ongoing" toggle, set-end action. _(Store layer ready; web not built.)_
+12. ⬜ **History page** — unified, filterable timeline.
+13. ⬜ **Per-dog detail + chart** — eating-quality stacked-bar SVG.
+14. ⬜ **systemd unit + deploy.sh + bootstrap.sh** — production install on the Pi.
+15. ⬜ **UAT pass + polish** — run the checklist; fix any rough edges; finalize the README.
 
-## 13. Verification / UAT checklist
+## 13. Verification / UAT checklist — ⬜
+
+> ⬜ **Not started** — every item below is gated on a deployed device + the web app; none have been run yet. Check them off during the UAT pass (milestone 15).
 
 Run each on the deployed device.
 
@@ -517,26 +791,38 @@ Run each on the deployed device.
 - [ ] Select dog A; tap GREEN — OLED briefly confirms; the dashboard now shows dog A as fed full.
 - [ ] Select dog B; tap YELLOW — partial feeding recorded.
 - [ ] Select dog C; tap RED — none recorded.
+- [ ] Lock timing: after the last dog's meal, the LED turns solid green and the 4-hour lock is timed **from that last meal**.
+- [ ] Grace timeout: feed only 2 of 3 dogs and wait `meal_complete_grace_minutes` (15) — the device locks with the two recorded; the third has **no record** (added later on the web).
+- [ ] Add-in chord: select a dog, **press and hold GREEN**, and while holding tap BLUE — OLED shows the add-in picker ranked by that dog's history with an "Other (name later)" row at the bottom. Scroll with the dial, short-press the rotary on a tag — the feeding commits with exactly that tag and advances to the next dog.
+- [ ] Reverse chord: select a dog, **press and hold BLUE**, then tap GREEN/YELLOW/RED — the same add-in picker opens; selecting a tag commits the meal with it (identical to the hold-meal-then-Blue chord).
+- [ ] Add-in "Other": run the chord again and pick "Other" — the feeding commits and later shows up on the web `/feedings` page flagged "name this add-in".
+- [ ] Add-in walk-away: start the chord, then do nothing for `addin_idle_seconds` — the pending meal commits **untagged** (not lost) and advances.
+- [ ] A normal quick tap (press + release, no Blue) still commits a plain meal with no perceptible delay.
 - [ ] LED bar transitions to solid green.
 - [ ] OLED transitions to the locked summary scene listing each dog with its score.
 - [ ] Within 4 hours, taps on G/Y/R are ignored (silent).
-- [ ] Tap of BLUE alone in the locked period is ignored; press-and-hold of BLUE (≥ 1.5 s) enters snack mode; pick a dog; tap BLUE; snack recorded; the snack-mode scene exits after 60 s of inactivity, returning to the locked summary.
+- [ ] Tap of BLUE alone in the locked period is ignored; press-and-hold of BLUE (≥ 1.5 s, caught within ~1 s on the tick) enters snack mode; pick a dog; tap BLUE; snack recorded and a `*` appears next to that dog in the summary; the snack-mode scene exits after 60 s of inactivity, returning to the locked summary.
 - [ ] Long-press rotary SW (≥ 1.5 s) clears the lock; LED fades out; OLED returns to selector.
 - [ ] After 4 hours the lock auto-clears.
 
 ### 13.3 Web app
-- [ ] Dashboard accurately reflects today's entries.
+- [ ] Dashboard shows each dog's **last-fed time + score** (e.g. "last fed 8:13 AM — full") accurately.
 - [ ] Edit a past feeding (change timestamp + score) — change is reflected in history and in the dog's detail chart.
 - [ ] Soft-delete a feeding — entry disappears from the table; chart updates.
 - [ ] Add a retroactive feeding via web with a custom timestamp — appears in the correct chronological position.
+- [ ] On `/feedings`, add two add-in tags (e.g. shredded chicken + cheese) to one meal via chips — both persist and show on the dog's history; remove one — it detaches without affecting the other.
+- [ ] Create a brand-new tag from the feeding edit dialog's create-on-the-fly field — it's reusable on the next feeding and appears in `/tags`.
+- [ ] Resolve a device "Other" feeding: open the flagged feeding, replace Unspecified with a real tag — the flag clears.
+- [ ] Archive a tag in `/tags` — it disappears from new pickers but remains visible on the past feedings that used it.
+- [ ] Manage dogs / tag ranking: a tag used often for dog A sorts above unused tags in A's device and web picker; that ranking is per-dog (not mirrored to dog B).
 - [ ] Add an illness event spanning yesterday → today with an "ongoing" end; later set the end date.
 - [ ] Add a stress event for the whole household.
-- [ ] Manage dogs: rename, change accent color, upload a photo. Photo appears on dashboard.
+- [ ] Manage dogs: rename, change accent color, upload a photo. Photo appears on dashboard; an over-limit image (>150 KB or >320×320) is rejected with a clear message.
 
 ### 13.4 Resilience
 - [ ] Reboot Pi with home wifi turned off. Press a button — feeding recorded with a sane timestamp from DS1307. Re-enable wifi — `pupcup.local` reachable; the entry appears.
 - [ ] Run `./deploy.sh` while the device is in the locked state — service restarts, OLED briefly blanks, LED bar resumes green, lock state preserved (verified via dashboard).
-- [ ] Pull power abruptly mid-write — on next boot, no DB corruption (SQLite WAL mode) and the state machine resumes correctly.
+- [ ] Pull power abruptly mid-write — on next boot, no DB corruption (SQLite WAL mode) and the state machine resumes correctly. (A feeding pressed in the final moment before the cut may be lost — `synchronous=NORMAL` — and is re-addable on the web; the accepted durability stance.)
 - [ ] `systemctl status pupcup` shows `active (running)`; journald shows structured logs.
 
 ### 13.5 Polish
