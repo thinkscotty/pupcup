@@ -16,8 +16,10 @@ go test ./...
 PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite PUPCUP_PHOTO_DIR=./photos go run ./cmd/pupcup
 # Visit http://localhost:8080/ for the dashboard (who's been fed today, with
 # per-dog quick-add buttons), /feedings to record meals & snacks with a
-# retroactive timestamp and edit/delete past entries (HTMX-driven), /dogs to
-# add/edit dogs (name, accent color, photo), or /healthz for the probe.
+# retroactive timestamp and edit/delete past entries (HTMX-driven), /illness
+# and /stress to log date-range health/stress events (ongoing toggle +
+# one-click set-end; stress can be whole-household), /dogs to add/edit dogs
+# (name, accent color, photo), or /healthz for the probe.
 ```
 
 ## Cross-compile + deploy to Pi

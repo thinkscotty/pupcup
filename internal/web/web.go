@@ -126,6 +126,23 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /snacks/{id}", s.handleSnackUpdate)
 	mux.HandleFunc("DELETE /snacks/{id}", s.handleSnackDelete)
 
+	// Illness & stress events — HTMX-driven CRUD (milestone 11), same shape as
+	// feedings. PATCH backs both the inline edit form and the ongoing-row "set
+	// end" quick action. Dates are calendar-only (no time-of-day).
+	mux.HandleFunc("GET /illness", s.handleIllnessIndex)
+	mux.HandleFunc("POST /illness", s.handleIllnessCreate)
+	mux.HandleFunc("GET /illness/{id}", s.handleIllnessRow)
+	mux.HandleFunc("GET /illness/{id}/edit", s.handleIllnessEditForm)
+	mux.HandleFunc("PATCH /illness/{id}", s.handleIllnessUpdate)
+	mux.HandleFunc("DELETE /illness/{id}", s.handleIllnessDelete)
+
+	mux.HandleFunc("GET /stress", s.handleStressIndex)
+	mux.HandleFunc("POST /stress", s.handleStressCreate)
+	mux.HandleFunc("GET /stress/{id}", s.handleStressRow)
+	mux.HandleFunc("GET /stress/{id}/edit", s.handleStressEditForm)
+	mux.HandleFunc("PATCH /stress/{id}", s.handleStressUpdate)
+	mux.HandleFunc("DELETE /stress/{id}", s.handleStressDelete)
+
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 
 	// Catch-all: anything not matched above renders the 404 page.
@@ -144,7 +161,8 @@ func (s *Server) Handler() http.Handler {
 type baseData struct {
 	Version string
 	Host    string
-	// Nav marks the active top-nav item ("dashboard" | "dogs").
+	// Nav marks the active top-nav item ("dashboard" | "feedings" | "illness" |
+	// "stress" | "dogs").
 	Nav string
 }
 

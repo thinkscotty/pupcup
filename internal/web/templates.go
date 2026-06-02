@@ -24,6 +24,8 @@ var pages = map[string]string{
 	"dashboard": "templates/dashboard.html",
 	"dogs":      "templates/dogs.html",
 	"feedings":  "templates/feedings.html",
+	"illness":   "templates/illness.html",
+	"stress":    "templates/stress.html",
 	"404":       "templates/404.html",
 }
 
@@ -62,6 +64,17 @@ func newTemplates(loc *time.Location) (*templates, error) {
 				t = t.In(loc)
 			}
 			return t.Format("2006-01-02T15:04")
+		},
+		// fmtEventDate renders a stored calendar date (illness/stress) for
+		// display. These are date-only values kept in UTC, so format in UTC to
+		// avoid a timezone shifting the day by one.
+		"fmtEventDate": func(t time.Time) string {
+			return t.UTC().Format("Mon, Jan 2 2006")
+		},
+		// fmtInputDate renders a stored calendar date as the value an
+		// <input type="date"> expects, for pre-filling edit pickers.
+		"fmtInputDate": func(t time.Time) string {
+			return t.UTC().Format("2006-01-02")
 		},
 		"scoreLabel": scoreLabel,
 		"scoreClass": scoreClass,

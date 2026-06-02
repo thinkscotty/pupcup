@@ -1,0 +1,110 @@
+{{define "title"}}PupCup &mdash; Illness{{end}}
+{{define "content"}}
+
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}">{{.Flash.Msg}}</div>{{end}}
+
+{{if .AnyDogs}}
+<section class="card">
+  <h1>Log an illness</h1>
+  <form class="feed-form" hx-post="/illness" hx-target="#illness-list" hx-swap="afterbegin"
+        hx-on::after-request="if(event.detail.successful)this.reset()">
+    <div id="illness-msg" class="form-msg"></div>
+    <div class="feed-grid">
+      <label class="field"><span>Dog</span>
+        <select name="dog_id" required>
+          <option value="" selected disabled>Pick a dog&hellip;</option>
+          {{range .Dogs}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select></label>
+      <label class="field"><span>Started</span>
+        <input type="date" name="start" value="{{.Today}}" required></label>
+      <label class="field"><span>Ended <span class="muted">(if known)</span></span>
+        <input type="date" name="end" disabled></label>
+      <label class="field-check field-inline"><input type="checkbox" name="ongoing" value="1" checked
+          onchange="this.closest('form').querySelector('input[name=end]').disabled=this.checked"> Still ongoing</label>
+      <label class="field field-wide"><span>Notes <span class="muted">(optional)</span></span>
+        <input type="text" name="notes" maxlength="200" autocomplete="off"
+               placeholder="e.g. vomiting, off food, vet visit"></label>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Log illness</button></div>
+  </form>
+</section>
+{{else}}
+<section class="card center">
+  <p class="muted">No dogs yet. <a href="/dogs">Add a dog</a> before logging an illness.</p>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Illness history</h2>
+  <ul class="entry-list" id="illness-list">
+    {{range .Events}}{{template "illness_row" .}}{{end}}
+    {{if not .Events}}<li id="illness-empty" class="entry-empty muted">Nothing logged yet.</li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+{{/* illness_row: one read-only illness event. End nil = ongoing. */}}
+{{define "illness_row"}}
+<li class="entry" id="illness-{{.ID}}" style="--accent: {{.Accent}}">
+  <span class="entry-dot{{if not .End}} score-none{{end}}" aria-hidden="true"></span>
+  <div class="entry-main">
+    <div class="entry-line">
+      <strong>{{.DogName}}</strong>
+      {{if .End}}
+      <span class="muted entry-when">{{fmtEventDate .Start}} &ndash; {{fmtEventDate .End}}</span>
+      {{else}}
+      <span class="badge badge-ongoing">Ongoing</span>
+      <span class="muted entry-when">since {{fmtEventDate .Start}}</span>
+      {{end}}
+    </div>
+    {{if .Notes}}<p class="entry-specifics muted">{{.Notes}}</p>{{end}}
+    {{if not .End}}
+    <form class="set-end" hx-patch="/illness/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+      <input type="hidden" name="start" value="{{fmtInputDate .Start}}">
+      <input type="hidden" name="notes" value="{{.Notes}}">
+      <label class="muted">End date
+        <input type="date" name="end" value="{{.Today}}" required></label>
+      <button type="submit" class="btn btn-ghost btn-sm">Set end</button>
+    </form>
+    {{end}}
+  </div>
+  <div class="entry-actions">
+    <button type="button" class="btn btn-ghost btn-sm"
+            hx-get="/illness/{{.ID}}/edit" hx-target="closest .entry" hx-swap="outerHTML">Edit</button>
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/illness/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML swap:150ms"
+            hx-confirm="Delete this illness event?">Delete</button>
+  </div>
+</li>
+{{end}}
+
+{{/* illness_new: create response — prepend the row, drop the empty placeholder. */}}
+{{define "illness_new"}}
+{{template "illness_row" .}}
+<li id="illness-empty" hx-swap-oob="delete"></li>
+{{end}}
+
+{{/* illness_edit: inline edit form swapped in for a row. */}}
+{{define "illness_edit"}}
+<li class="entry entry-editing" id="illness-{{.ID}}" style="--accent: {{.Accent}}">
+  <form class="entry-edit-form" hx-patch="/illness/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+    <div id="edit-msg-illness-{{.ID}}" class="form-msg"></div>
+    <p class="entry-edit-subject"><strong>{{.DogName}}</strong></p>
+    <div class="entry-edit-grid">
+      <label class="field"><span>Started</span>
+        <input type="date" name="start" value="{{fmtInputDate .Start}}" required></label>
+      <label class="field"><span>Ended <span class="muted">(if known)</span></span>
+        <input type="date" name="end" value="{{if .End}}{{fmtInputDate .End}}{{end}}"{{if not .End}} disabled{{end}}></label>
+      <label class="field-check field-inline"><input type="checkbox" name="ongoing" value="1"{{if not .End}} checked{{end}}
+          onchange="this.closest('form').querySelector('input[name=end]').disabled=this.checked"> Still ongoing</label>
+      <label class="field field-wide"><span>Notes</span>
+        <input type="text" name="notes" value="{{.Notes}}" maxlength="200" autocomplete="off"></label>
+    </div>
+    <div class="entry-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm"
+              hx-get="/illness/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">Cancel</button>
+    </div>
+  </form>
+</li>
+{{end}}

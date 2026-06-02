@@ -1,0 +1,118 @@
+{{define "title"}}PupCup &mdash; Stress{{end}}
+{{define "content"}}
+
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}">{{.Flash.Msg}}</div>{{end}}
+
+<section class="card">
+  <h1>Log a stressor</h1>
+  <p class="muted">Travel, houseguests, boarding, a thunderstorm &mdash; anything that might affect appetite. Leave the dog as <em>Whole household</em> if it applies to everyone.</p>
+  <form class="feed-form" hx-post="/stress" hx-target="#stress-list" hx-swap="afterbegin"
+        hx-on::after-request="if(event.detail.successful)this.reset()">
+    <div id="stress-msg" class="form-msg"></div>
+    <div class="feed-grid">
+      <label class="field"><span>Who</span>
+        <select name="dog_id">
+          <option value="">Whole household</option>
+          {{range .Dogs}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select></label>
+      <label class="field"><span>Kind <span class="muted">(optional)</span></span>
+        <input type="text" name="kind" maxlength="40" autocomplete="off" placeholder="e.g. travel, boarding"></label>
+      <label class="field"><span>Started</span>
+        <input type="date" name="start" value="{{.Today}}" required></label>
+      <label class="field"><span>Ended <span class="muted">(if known)</span></span>
+        <input type="date" name="end" disabled></label>
+      <label class="field-check field-inline"><input type="checkbox" name="ongoing" value="1" checked
+          onchange="this.closest('form').querySelector('input[name=end]').disabled=this.checked"> Still ongoing</label>
+      <label class="field field-wide"><span>Notes <span class="muted">(optional)</span></span>
+        <input type="text" name="notes" maxlength="200" autocomplete="off"
+               placeholder="e.g. grandparents visiting for the week"></label>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Log stressor</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Stress history</h2>
+  <ul class="entry-list" id="stress-list">
+    {{range .Events}}{{template "stress_row" .}}{{end}}
+    {{if not .Events}}<li id="stress-empty" class="entry-empty muted">Nothing logged yet.</li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+{{/* stress_row: one read-only stress event. DogID nil = whole household. */}}
+{{define "stress_row"}}
+<li class="entry" id="stress-{{.ID}}" style="--accent: {{.Accent}}">
+  <span class="entry-dot{{if not .End}} score-partial{{end}}" aria-hidden="true"></span>
+  <div class="entry-main">
+    <div class="entry-line">
+      <strong>{{.DogName}}</strong>
+      {{if .Household}}<span class="badge badge-household">Household</span>{{end}}
+      {{if .Kind}}<span class="badge badge-idle">{{.Kind}}</span>{{end}}
+      {{if .End}}
+      <span class="muted entry-when">{{fmtEventDate .Start}} &ndash; {{fmtEventDate .End}}</span>
+      {{else}}
+      <span class="badge badge-ongoing">Ongoing</span>
+      <span class="muted entry-when">since {{fmtEventDate .Start}}</span>
+      {{end}}
+    </div>
+    {{if .Notes}}<p class="entry-specifics muted">{{.Notes}}</p>{{end}}
+    {{if not .End}}
+    <form class="set-end" hx-patch="/stress/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+      <input type="hidden" name="dog_id" value="{{if .DogID}}{{.DogID}}{{end}}">
+      <input type="hidden" name="kind" value="{{.Kind}}">
+      <input type="hidden" name="notes" value="{{.Notes}}">
+      <input type="hidden" name="start" value="{{fmtInputDate .Start}}">
+      <label class="muted">End date
+        <input type="date" name="end" value="{{.Today}}" required></label>
+      <button type="submit" class="btn btn-ghost btn-sm">Set end</button>
+    </form>
+    {{end}}
+  </div>
+  <div class="entry-actions">
+    <button type="button" class="btn btn-ghost btn-sm"
+            hx-get="/stress/{{.ID}}/edit" hx-target="closest .entry" hx-swap="outerHTML">Edit</button>
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/stress/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML swap:150ms"
+            hx-confirm="Delete this stress event?">Delete</button>
+  </div>
+</li>
+{{end}}
+
+{{/* stress_new: create response — prepend the row, drop the empty placeholder. */}}
+{{define "stress_new"}}
+{{template "stress_row" .}}
+<li id="stress-empty" hx-swap-oob="delete"></li>
+{{end}}
+
+{{/* stress_edit: inline edit form swapped in for a row. Carries the dog select
+     (who, incl. Whole household) since a stressor's subject is editable. */}}
+{{define "stress_edit"}}
+<li class="entry entry-editing" id="stress-{{.ID}}" style="--accent: {{.Accent}}">
+  <form class="entry-edit-form" hx-patch="/stress/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+    <div id="edit-msg-stress-{{.ID}}" class="form-msg"></div>
+    <div class="entry-edit-grid">
+      <label class="field"><span>Who</span>
+        <select name="dog_id">
+          <option value=""{{if eq .SelDog 0}} selected{{end}}>Whole household</option>
+          {{range .Dogs}}<option value="{{.ID}}"{{if eq .ID $.SelDog}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>
+      <label class="field"><span>Kind</span>
+        <input type="text" name="kind" value="{{.Kind}}" maxlength="40" autocomplete="off"></label>
+      <label class="field"><span>Started</span>
+        <input type="date" name="start" value="{{fmtInputDate .Start}}" required></label>
+      <label class="field"><span>Ended <span class="muted">(if known)</span></span>
+        <input type="date" name="end" value="{{if .End}}{{fmtInputDate .End}}{{end}}"{{if not .End}} disabled{{end}}></label>
+      <label class="field-check field-inline"><input type="checkbox" name="ongoing" value="1"{{if not .End}} checked{{end}}
+          onchange="this.closest('form').querySelector('input[name=end]').disabled=this.checked"> Still ongoing</label>
+      <label class="field field-wide"><span>Notes</span>
+        <input type="text" name="notes" value="{{.Notes}}" maxlength="200" autocomplete="off"></label>
+    </div>
+    <div class="entry-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm"
+              hx-get="/stress/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">Cancel</button>
+    </div>
+  </form>
+</li>
+{{end}}

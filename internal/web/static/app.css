@@ -331,9 +331,11 @@ a { color: inherit; }
 .feed-form select,
 .feed-form input[type="text"],
 .feed-form input[type="datetime-local"],
+.feed-form input[type="date"],
 .entry-edit-form select,
 .entry-edit-form input[type="text"],
-.entry-edit-form input[type="datetime-local"] {
+.entry-edit-form input[type="datetime-local"],
+.entry-edit-form input[type="date"] {
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -386,3 +388,36 @@ a { color: inherit; }
   margin-bottom: 0.75rem;
 }
 .entry-edit-grid .field-wide { grid-column: 1 / -1; }
+
+/* ---- illness & stress events ---- */
+/* A checkbox+label that sits as one cell in the form grid, baseline-aligned
+   with the date pickers beside it. */
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  align-self: end;
+  padding-bottom: 0.55rem;
+}
+.badge-ongoing { background: var(--yellow); }
+.badge-household { background: var(--blue); }
+.entry-edit-subject { margin: 0 0 0.6rem; }
+
+/* The "set end date" quick action shown on an ongoing event row. */
+.set-end {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.set-end label { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.set-end input[type="date"] {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+  color: inherit;
+}
