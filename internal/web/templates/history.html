@@ -1,0 +1,74 @@
+{{define "title"}}PupCup &mdash; History{{end}}
+{{define "content"}}
+
+<section class="card">
+  <h1>History</h1>
+  <p class="muted">Everything recorded &mdash; meals, snacks, illness, and stress &mdash; newest first.</p>
+  <form class="history-filter" method="get" action="/history">
+    <div class="feed-grid">
+      <label class="field"><span>Dog</span>
+        <select name="dog">
+          <option value="">All dogs</option>
+          {{range .Dogs}}<option value="{{.ID}}"{{if eq .ID $.Filter.DogID}} selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>
+      <label class="field"><span>Type</span>
+        <select name="type">
+          <option value="">All activity</option>
+          <option value="feeding"{{if eq .Filter.Type "feeding"}} selected{{end}}>Meals</option>
+          <option value="snack"{{if eq .Filter.Type "snack"}} selected{{end}}>Snacks</option>
+          <option value="illness"{{if eq .Filter.Type "illness"}} selected{{end}}>Illness</option>
+          <option value="stress"{{if eq .Filter.Type "stress"}} selected{{end}}>Stress</option>
+        </select></label>
+      <label class="field"><span>From</span>
+        <input type="date" name="from" value="{{.Filter.From}}"></label>
+      <label class="field"><span>To</span>
+        <input type="date" name="to" value="{{.Filter.To}}"></label>
+    </div>
+    <div class="form-actions history-actions">
+      <button type="submit" class="btn btn-primary">Apply filters</button>
+      <a class="btn btn-ghost" href="/history">Clear</a>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Timeline <span class="muted history-count">({{.Count}} {{if eq .Count 1}}entry{{else}}entries{{end}})</span></h2>
+  <ul class="entry-list">
+    {{range .Items}}{{template "history_row" .}}{{end}}
+    {{if not .Items}}<li class="entry-empty muted">
+      {{if not .AnyDogs}}No dogs yet. <a href="/dogs">Add a dog</a> to start tracking.
+      {{else}}Nothing matches these filters.{{end}}
+    </li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+{{/* history_row: one read-only timeline entry. Type selects the layout. */}}
+{{define "history_row"}}
+<li class="entry" style="--accent: {{.Accent}}">
+  <span class="entry-dot {{.DotClass}}" aria-hidden="true"></span>
+  <div class="entry-main">
+    <div class="entry-line">
+      <strong>{{.DogName}}</strong>
+      <span class="badge badge-cat">{{.CatLabel}}</span>
+      {{if eq .Type "feeding"}}
+        <span class="badge {{scoreClass .Score}}">{{scoreLabel .Score}}</span>
+        {{if eq .Kind "nonstandard"}}<span class="badge badge-idle">Non-standard</span>{{end}}
+        <span class="muted entry-when">{{fmtTime .When}}</span>
+      {{else if eq .Type "snack"}}
+        <span class="muted entry-when">{{fmtTime .When}}</span>
+      {{else}}
+        {{if .Household}}<span class="badge badge-household">Household</span>{{end}}
+        {{if .EventKind}}<span class="badge badge-idle">{{.EventKind}}</span>{{end}}
+        {{if .End}}
+        <span class="muted entry-when">{{fmtEventDate .Start}} &ndash; {{fmtEventDate .End}}</span>
+        {{else}}
+        <span class="badge badge-ongoing">Ongoing</span>
+        <span class="muted entry-when">since {{fmtEventDate .Start}}</span>
+        {{end}}
+      {{end}}
+    </div>
+    {{if .Detail}}<p class="entry-specifics muted">{{.Detail}}</p>{{end}}
+  </div>
+</li>
+{{end}}

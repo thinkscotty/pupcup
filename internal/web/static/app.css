@@ -421,3 +421,95 @@ a { color: inherit; }
   background: #fff;
   color: inherit;
 }
+
+/* History page — the filter bar reuses the feed-grid; a neutral category tag
+   distinguishes each entry kind in the merged timeline. */
+.history-filter { margin-top: 1rem; }
+.history-filter select,
+.history-filter input[type="date"] {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  background: #fff;
+  color: inherit;
+}
+.history-actions { display: flex; gap: 0.5rem; align-items: center; }
+.history-count { font-size: 0.85rem; font-weight: 400; }
+.badge-cat { background: var(--bg); border: 1px solid var(--line); color: rgba(58, 51, 43, 0.75); }
+
+/* ---- per-dog detail page (milestone 13) ---- */
+.detail-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.detail-head .avatar { border-color: var(--accent, var(--line)); }
+.detail-head-meta { flex: 1 1 auto; }
+.detail-head-meta h1 { margin: 0; }
+.detail-head-meta p { margin: 0.25rem 0 0; }
+
+/* Window selector — small pill tabs (7d / 30d / 90d), plain links. */
+.window-tabs { display: flex; gap: 0.4rem; }
+.window-tab {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: inherit;
+  background: #fff;
+}
+.window-tab.active { background: var(--text); color: var(--bg); border-color: transparent; }
+
+/* Eating-quality stacked-bar chart. Colors come from the shared palette so the
+   chart never drifts from the badges/dots elsewhere. */
+.chart-wrap { margin-top: 0.5rem; }
+.eq-chart { display: block; width: 100%; height: auto; }
+.eq-chart .bar-full { fill: var(--green); }
+.eq-chart .bar-partial { fill: var(--yellow); }
+.eq-chart .bar-none { fill: var(--red); }
+.eq-chart .axis { stroke: var(--line); stroke-width: 1; }
+.eq-chart .axis-label { fill: rgba(58, 51, 43, 0.55); font-size: 10px; }
+.eq-chart .chart-empty { fill: rgba(58, 51, 43, 0.55); font-size: 13px; }
+
+.chart-legend {
+  list-style: none;
+  display: flex;
+  gap: 1rem;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: rgba(58, 51, 43, 0.7);
+}
+.chart-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.swatch-box { width: 0.85rem; height: 0.85rem; border-radius: 4px; display: inline-block; }
+.swatch-box.bar-full { background: var(--green); }
+.swatch-box.bar-partial { background: var(--yellow); }
+.swatch-box.bar-none { background: var(--red); }
+
+/* Summary stat tiles. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+.stat-num { font-size: 1.4rem; font-weight: 700; }
+
+/* Read-only history table. */
+.detail-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.detail-table th, .detail-table td {
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.detail-table th { font-size: 0.8rem; color: rgba(58, 51, 43, 0.6); font-weight: 500; }
+.detail-table td .entry-specifics { display: block; margin-top: 0.2rem; }
+.detail-foot { margin: 0.8rem 0 0; }

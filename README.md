@@ -18,8 +18,11 @@ PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite PUPCUP_PHOTO_DIR=./photos
 # per-dog quick-add buttons), /feedings to record meals & snacks with a
 # retroactive timestamp and edit/delete past entries (HTMX-driven), /illness
 # and /stress to log date-range health/stress events (ongoing toggle +
-# one-click set-end; stress can be whole-household), /dogs to add/edit dogs
-# (name, accent color, photo), or /healthz for the probe.
+# one-click set-end; stress can be whole-household), /history for the unified
+# timeline of every meal/snack/illness/stress (filter by dog, type, and date
+# range), /dogs to add/edit dogs (name, accent color, photo), a dog's name for
+# its detail page (/dogs/{id} — an eating-quality SVG chart over a 7/30/90-day
+# window, summary stats, and a history table), or /healthz for the probe.
 ```
 
 ## Cross-compile + deploy to Pi

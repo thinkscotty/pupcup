@@ -21,12 +21,14 @@ var staticFS embed.FS
 // page is parsed together with base.html into its own template set so the
 // {{define "content"}} blocks don't collide across pages.
 var pages = map[string]string{
-	"dashboard": "templates/dashboard.html",
-	"dogs":      "templates/dogs.html",
-	"feedings":  "templates/feedings.html",
-	"illness":   "templates/illness.html",
-	"stress":    "templates/stress.html",
-	"404":       "templates/404.html",
+	"dashboard":  "templates/dashboard.html",
+	"dogs":       "templates/dogs.html",
+	"feedings":   "templates/feedings.html",
+	"illness":    "templates/illness.html",
+	"stress":     "templates/stress.html",
+	"history":    "templates/history.html",
+	"dog_detail": "templates/dog_detail.html",
+	"404":        "templates/404.html",
 }
 
 // templates holds one fully-parsed *template.Template per page, keyed by the

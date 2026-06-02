@@ -1,0 +1,77 @@
+{{define "title"}}PupCup &mdash; {{.Dog.Name}}{{end}}
+{{define "content"}}
+
+<section class="card detail-head" style="--accent: {{.Dog.AccentColor}}">
+  {{if .Dog.HasPhoto}}
+  <img class="avatar" src="/photos/{{.Dog.ID}}" alt="{{.Dog.Name}}" width="64" height="64">
+  {{else}}
+  <span class="avatar avatar-blank" aria-hidden="true">{{slice .Dog.Name 0 1}}</span>
+  {{end}}
+  <div class="detail-head-meta">
+    <h1>{{.Dog.Name}}</h1>
+    <p class="muted">Eating quality over the last {{.Window}} days.</p>
+  </div>
+  <nav class="window-tabs" aria-label="Time range">
+    {{range .Windows}}
+    <a href="/dogs/{{$.Dog.ID}}?window={{.}}"
+       class="window-tab{{if eq . $.Window}} active{{end}}"
+       {{if eq . $.Window}}aria-current="page"{{end}}>{{.}}d</a>
+    {{end}}
+  </nav>
+</section>
+
+<section class="card">
+  <h2>Eating quality</h2>
+  <div class="chart-wrap">{{.Chart}}</div>
+  <ul class="chart-legend" aria-hidden="true">
+    <li><span class="swatch-box bar-full"></span>Full</li>
+    <li><span class="swatch-box bar-partial"></span>Partial</li>
+    <li><span class="swatch-box bar-none"></span>None</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Summary <span class="muted">({{.Window}} days)</span></h2>
+  {{if .Stats.Total}}
+  <div class="stat-grid">
+    <div class="stat"><span class="stat-num">{{.Stats.Total}}</span><span class="muted">meals</span></div>
+    <div class="stat"><span class="stat-num">{{.Stats.Full}}</span><span class="muted">full &middot; {{.Stats.FullPct}}%</span></div>
+    <div class="stat"><span class="stat-num">{{.Stats.Partial}}</span><span class="muted">partial &middot; {{.Stats.PartialPct}}%</span></div>
+    <div class="stat"><span class="stat-num">{{.Stats.None}}</span><span class="muted">none &middot; {{.Stats.NonePct}}%</span></div>
+    <div class="stat"><span class="stat-num">{{.SnackCount}}</span><span class="muted">snacks</span></div>
+  </div>
+  {{else}}
+  <p class="muted">No meals recorded in this window.</p>
+  {{end}}
+</section>
+
+<section class="card">
+  <h2>History <span class="muted">({{len .Rows}})</span></h2>
+  {{if .Rows}}
+  <table class="detail-table">
+    <thead><tr><th>Date</th><th>Time</th><th>Type</th><th>Outcome</th></tr></thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td>{{fmtDate .When}}</td>
+        <td>{{fmtClock .When}}</td>
+        <td>{{if .IsSnack}}<span class="badge badge-idle">Snack</span>{{else}}Meal{{end}}</td>
+        <td>
+          {{if .IsSnack}}
+            {{if .Detail}}<span class="muted">{{.Detail}}</span>{{else}}&mdash;{{end}}
+          {{else}}
+            <span class="badge {{scoreClass .Score}}">{{scoreLabel .Score}}</span>
+            {{if eq .Kind "nonstandard"}}<span class="badge badge-idle">Non-standard</span>{{end}}
+            {{if .Detail}}<span class="muted entry-specifics">{{.Detail}}</span>{{end}}
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <p class="muted detail-foot">Edit or delete entries on the <a href="/feedings">Feedings</a> page, or see everything on the <a href="/history?dog={{.Dog.ID}}">full timeline</a>.</p>
+  {{else}}
+  <p class="muted">Nothing recorded in this window. <a href="/feedings">Record a meal</a> to get started.</p>
+  {{end}}
+</section>
+{{end}}

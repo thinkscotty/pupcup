@@ -106,6 +106,9 @@ func (s *Server) routes() {
 
 	mux.HandleFunc("GET /dogs", s.handleDogsIndex)
 	mux.HandleFunc("POST /dogs", s.handleDogCreate)
+	// Per-dog detail: eating-quality chart + history table (milestone 13),
+	// windowed by a plain ?window=7|30|90 GET param (works without JavaScript).
+	mux.HandleFunc("GET /dogs/{id}", s.handleDogDetail)
 	mux.HandleFunc("POST /dogs/{id}", s.handleDogUpdate)
 	mux.HandleFunc("DELETE /dogs/{id}", s.handleDogDelete)
 	mux.HandleFunc("GET /photos/{id}", s.handlePhoto)
@@ -143,6 +146,10 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /stress/{id}", s.handleStressUpdate)
 	mux.HandleFunc("DELETE /stress/{id}", s.handleStressDelete)
 
+	// History — read-only unified timeline (milestone 12), filterable by dog /
+	// type / date range via plain GET query params (works without JavaScript).
+	mux.HandleFunc("GET /history", s.handleHistory)
+
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 
 	// Catch-all: anything not matched above renders the 404 page.
@@ -162,7 +169,7 @@ type baseData struct {
 	Version string
 	Host    string
 	// Nav marks the active top-nav item ("dashboard" | "feedings" | "illness" |
-	// "stress" | "dogs").
+	// "stress" | "history" | "dogs").
 	Nav string
 }
 
