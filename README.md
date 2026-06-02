@@ -14,8 +14,10 @@ go test ./...
 # hardware drivers are Fakes, so the daemon seeds the household's dogs, shows the
 # boot splash, serves the web app, advertises mDNS, and exits cleanly on Ctrl-C.
 PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite PUPCUP_PHOTO_DIR=./photos go run ./cmd/pupcup
-# Visit http://localhost:8080/ for the dashboard (who's been fed today),
-# /dogs to add/edit dogs (name, accent color, photo), or /healthz for the probe.
+# Visit http://localhost:8080/ for the dashboard (who's been fed today, with
+# per-dog quick-add buttons), /feedings to record meals & snacks with a
+# retroactive timestamp and edit/delete past entries (HTMX-driven), /dogs to
+# add/edit dogs (name, accent color, photo), or /healthz for the probe.
 ```
 
 ## Cross-compile + deploy to Pi

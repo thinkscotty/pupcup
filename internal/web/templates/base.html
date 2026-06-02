@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{block "title" .}}PupCup{{end}}</title>
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -14,6 +15,7 @@
     </a>
     <nav class="site-nav">
       <a href="/"{{if eq .Nav "dashboard"}} class="active" aria-current="page"{{end}}>Today</a>
+      <a href="/feedings"{{if eq .Nav "feedings"}} class="active" aria-current="page"{{end}}>Feedings</a>
       <a href="/dogs"{{if eq .Nav "dogs"}} class="active" aria-current="page"{{end}}>Dogs</a>
     </nav>
     {{if .Host}}<span class="host-hint">{{.Host}}</span>{{end}}

@@ -7,41 +7,52 @@
 
 {{if .AnyDogs}}
 <div class="status-grid">
-  {{range .Dogs}}
-  <article class="dog-status" style="--accent: {{.AccentColor}}">
-    <div class="dog-status-head">
-      {{if .HasPhoto}}
-      <img class="avatar" src="/photos/{{.ID}}" alt="{{.Name}}" width="56" height="56">
-      {{else}}
-      <span class="avatar avatar-blank" aria-hidden="true">{{slice .Name 0 1}}</span>
-      {{end}}
-      <div class="dog-status-name">
-        <h2>{{.Name}}</h2>
-        {{if .Last}}
-        <span class="badge {{scoreClass .Last.Score}}">{{scoreLabel .Last.Score}}</span>
-        {{else}}
-        <span class="badge badge-idle">Not fed yet</span>
-        {{end}}
-      </div>
-    </div>
-    {{if .Last}}
-    <p class="dog-status-when">Last fed at <strong>{{fmtClock .Last.TS}}</strong></p>
-    {{if gt (len .Feedings) 1}}
-    <ul class="meal-line">
-      {{range .Feedings}}
-      <li><span class="dot {{scoreClass .Score}}" aria-hidden="true"></span>{{fmtClock .TS}}</li>
-      {{end}}
-    </ul>
-    {{end}}
-    {{else}}
-    <p class="dog-status-when muted">No meals recorded today.</p>
-    {{end}}
-  </article>
-  {{end}}
+  {{range .Dogs}}{{template "dog_status_card" .}}{{end}}
 </div>
 {{else}}
 <section class="card center">
   <p class="muted">No dogs yet. <a href="/dogs">Add your first dog</a> to start tracking.</p>
 </section>
 {{end}}
+{{end}}
+
+{{define "dog_status_card"}}
+<article class="dog-status" id="dog-card-{{.ID}}" style="--accent: {{.AccentColor}}">
+  <div class="dog-status-head">
+    {{if .HasPhoto}}
+    <img class="avatar" src="/photos/{{.ID}}" alt="{{.Name}}" width="56" height="56">
+    {{else}}
+    <span class="avatar avatar-blank" aria-hidden="true">{{slice .Name 0 1}}</span>
+    {{end}}
+    <div class="dog-status-name">
+      <h2>{{.Name}}</h2>
+      {{if .Last}}
+      <span class="badge {{scoreClass .Last.Score}}">{{scoreLabel .Last.Score}}</span>
+      {{else}}
+      <span class="badge badge-idle">Not fed yet</span>
+      {{end}}
+    </div>
+  </div>
+  {{if .Last}}
+  <p class="dog-status-when">Last fed at <strong>{{fmtClock .Last.TS}}</strong></p>
+  {{if gt (len .Feedings) 1}}
+  <ul class="meal-line">
+    {{range .Feedings}}
+    <li><span class="dot {{scoreClass .Score}}" aria-hidden="true"></span>{{fmtClock .TS}}</li>
+    {{end}}
+  </ul>
+  {{end}}
+  {{else}}
+  <p class="dog-status-when muted">No meals recorded today.</p>
+  {{end}}
+
+  <form class="quick-add" hx-post="/feedings" hx-target="#dog-card-{{.ID}}" hx-swap="outerHTML">
+    <input type="hidden" name="dog_id" value="{{.ID}}">
+    <input type="hidden" name="return" value="card">
+    <span class="quick-add-label muted">Just fed?</span>
+    <button type="submit" name="score" value="full" class="qa qa-full" title="Cleaned the bowl">Full</button>
+    <button type="submit" name="score" value="partial" class="qa qa-partial" title="Ate some">Some</button>
+    <button type="submit" name="score" value="none" class="qa qa-none" title="Didn't eat">None</button>
+  </form>
+</article>
 {{end}}

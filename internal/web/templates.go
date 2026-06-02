@@ -23,6 +23,7 @@ var staticFS embed.FS
 var pages = map[string]string{
 	"dashboard": "templates/dashboard.html",
 	"dogs":      "templates/dogs.html",
+	"feedings":  "templates/feedings.html",
 	"404":       "templates/404.html",
 }
 
@@ -53,6 +54,14 @@ func newTemplates(loc *time.Location) (*templates, error) {
 				t = t.In(loc)
 			}
 			return t.Format("3:04 PM")
+		},
+		// fmtInputDateTime renders a UTC instant as the local wall-clock value an
+		// <input type="datetime-local"> expects, for pre-filling the edit picker.
+		"fmtInputDateTime": func(t time.Time) string {
+			if loc != nil {
+				t = t.In(loc)
+			}
+			return t.Format("2006-01-02T15:04")
 		},
 		"scoreLabel": scoreLabel,
 		"scoreClass": scoreClass,
@@ -107,6 +116,24 @@ func (t *templates) render(w http.ResponseWriter, status int, page string, data 
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "base", data); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+// fragment executes a single named {{define}} block from a page's template set
+// (rather than the whole "base" layout), for HTMX partial responses. Buffered
+// like render so a template error becomes a 500, not a torn fragment.
+func (t *templates) fragment(w http.ResponseWriter, status int, page, name string, data any) error {
+	tmpl, ok := t.set[page]
+	if !ok {
+		return fmt.Errorf("unknown page %q", page)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

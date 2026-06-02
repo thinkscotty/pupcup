@@ -1,0 +1,156 @@
+{{define "title"}}PupCup &mdash; Feedings{{end}}
+{{define "content"}}
+
+{{if .Flash}}<div class="flash flash-{{.Flash.Level}}">{{.Flash.Msg}}</div>{{end}}
+
+{{if .AnyDogs}}
+<section class="card">
+  <h1>Record a meal</h1>
+  <form class="feed-form" hx-post="/feedings" hx-target="#entry-list" hx-swap="afterbegin"
+        hx-on::after-request="if(event.detail.successful)this.reset()">
+    <div id="feed-msg" class="form-msg"></div>
+    <div class="feed-grid">
+      <label class="field"><span>Dog</span>
+        <select name="dog_id" required>{{template "dog_options" .Dogs}}</select></label>
+      <label class="field"><span>How well</span>
+        <select name="score" required>
+          <option value="full">Cleaned the bowl</option>
+          <option value="partial">Ate some</option>
+          <option value="none">Didn't eat</option>
+        </select></label>
+      <label class="field"><span>Kind</span>
+        <select name="kind">
+          <option value="standard">Standard</option>
+          <option value="nonstandard">Non-standard</option>
+        </select></label>
+      <label class="field"><span>When</span>
+        <input type="datetime-local" name="ts" value="{{.NowInput}}"></label>
+      <label class="field field-wide"><span>Notes <span class="muted">(optional)</span></span>
+        <input type="text" name="specifics" maxlength="200" autocomplete="off"
+               placeholder="e.g. added shredded chicken"></label>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Add meal</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Quick snack</h2>
+  <form class="feed-form" hx-post="/snacks" hx-target="#entry-list" hx-swap="afterbegin"
+        hx-on::after-request="if(event.detail.successful)this.reset()">
+    <div id="snack-msg" class="form-msg"></div>
+    <div class="feed-grid">
+      <label class="field"><span>Dog</span>
+        <select name="dog_id" required>{{template "dog_options" .Dogs}}</select></label>
+      <label class="field"><span>When</span>
+        <input type="datetime-local" name="ts" value="{{.NowInput}}"></label>
+      <label class="field field-wide"><span>Notes <span class="muted">(optional)</span></span>
+        <input type="text" name="specifics" maxlength="200" autocomplete="off"
+               placeholder="e.g. dental chew"></label>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Add snack</button></div>
+  </form>
+</section>
+{{else}}
+<section class="card center">
+  <p class="muted">No dogs yet. <a href="/dogs">Add a dog</a> before recording feedings.</p>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Recent activity</h2>
+  <ul class="entry-list" id="entry-list">
+    {{range .Entries}}{{template "entry_row" .}}{{end}}
+    {{if not .Entries}}<li id="entry-empty" class="entry-empty muted">Nothing recorded yet.</li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+{{define "dog_options"}}{{range .}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
+
+{{/* entry_row: one read-only row in the recent-activity list (meal or snack). */}}
+{{define "entry_row"}}
+<li class="entry" id="{{if .IsSnack}}snack-{{else}}feeding-{{end}}{{.ID}}" style="--accent: {{.Accent}}">
+  <span class="entry-dot{{if not .IsSnack}} {{scoreClass .Score}}{{end}}" aria-hidden="true"></span>
+  <div class="entry-main">
+    <div class="entry-line">
+      <strong>{{.DogName}}</strong>
+      {{if .IsSnack}}
+      <span class="badge badge-snack">Snack</span>
+      {{else}}
+      <span class="badge {{scoreClass .Score}}">{{scoreLabel .Score}}</span>
+      {{if eq .Kind "nonstandard"}}<span class="badge badge-idle">Non-standard</span>{{end}}
+      {{end}}
+      <span class="muted entry-when">{{fmtTime .TS}}</span>
+      {{if .Edited}}<span class="muted entry-edited" title="Edited after it was recorded">&middot; edited</span>{{end}}
+    </div>
+    {{if .Specifics}}<p class="entry-specifics muted">{{.Specifics}}</p>{{end}}
+  </div>
+  <div class="entry-actions">
+    <button type="button" class="btn btn-ghost btn-sm"
+            hx-get="/{{if .IsSnack}}snacks{{else}}feedings{{end}}/{{.ID}}/edit"
+            hx-target="closest .entry" hx-swap="outerHTML">Edit</button>
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/{{if .IsSnack}}snacks{{else}}feedings{{end}}/{{.ID}}"
+            hx-target="closest .entry" hx-swap="outerHTML swap:150ms"
+            hx-confirm="Delete this {{if .IsSnack}}snack{{else}}feeding{{end}}?">Delete</button>
+  </div>
+</li>
+{{end}}
+
+{{/* new_entry: the create response — prepend the row, and drop the empty-state
+     placeholder out-of-band if it's still in the list. */}}
+{{define "new_entry"}}
+{{template "entry_row" .}}
+<li id="entry-empty" hx-swap-oob="delete"></li>
+{{end}}
+
+{{/* feeding_edit: inline edit form, swapped in for a meal row. */}}
+{{define "feeding_edit"}}
+<li class="entry entry-editing" id="feeding-{{.ID}}" style="--accent: {{.Accent}}">
+  <form class="entry-edit-form" hx-patch="/feedings/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+    <div id="edit-msg-feeding-{{.ID}}" class="form-msg"></div>
+    <div class="entry-edit-grid">
+      <label class="field"><span>When</span>
+        <input type="datetime-local" name="ts" value="{{fmtInputDateTime .TS}}" required></label>
+      <label class="field"><span>How well</span>
+        <select name="score">
+          <option value="full"{{if eq .Score "full"}} selected{{end}}>Cleaned the bowl</option>
+          <option value="partial"{{if eq .Score "partial"}} selected{{end}}>Ate some</option>
+          <option value="none"{{if eq .Score "none"}} selected{{end}}>Didn't eat</option>
+        </select></label>
+      <label class="field"><span>Kind</span>
+        <select name="kind">
+          <option value="standard"{{if eq .Kind "standard"}} selected{{end}}>Standard</option>
+          <option value="nonstandard"{{if eq .Kind "nonstandard"}} selected{{end}}>Non-standard</option>
+        </select></label>
+      <label class="field field-wide"><span>Notes</span>
+        <input type="text" name="specifics" value="{{.Specifics}}" maxlength="200" autocomplete="off"></label>
+    </div>
+    <div class="entry-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm"
+              hx-get="/feedings/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">Cancel</button>
+    </div>
+  </form>
+</li>
+{{end}}
+
+{{/* snack_edit: inline edit form, swapped in for a snack row. */}}
+{{define "snack_edit"}}
+<li class="entry entry-editing" id="snack-{{.ID}}" style="--accent: {{.Accent}}">
+  <form class="entry-edit-form" hx-patch="/snacks/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">
+    <div id="edit-msg-snack-{{.ID}}" class="form-msg"></div>
+    <div class="entry-edit-grid">
+      <label class="field"><span>When</span>
+        <input type="datetime-local" name="ts" value="{{fmtInputDateTime .TS}}" required></label>
+      <label class="field field-wide"><span>Notes</span>
+        <input type="text" name="specifics" value="{{.Specifics}}" maxlength="200" autocomplete="off"></label>
+    </div>
+    <div class="entry-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm"
+              hx-get="/snacks/{{.ID}}" hx-target="closest .entry" hx-swap="outerHTML">Cancel</button>
+    </div>
+  </form>
+</li>
+{{end}}

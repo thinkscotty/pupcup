@@ -110,6 +110,22 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /dogs/{id}", s.handleDogDelete)
 	mux.HandleFunc("GET /photos/{id}", s.handlePhoto)
 
+	// Feedings & snacks — HTMX-driven CRUD (milestone 10). The {id} (no
+	// suffix) GETs return the read-only row fragment used by an edit form's
+	// Cancel button; /{id}/edit returns the inline edit form.
+	mux.HandleFunc("GET /feedings", s.handleFeedingsIndex)
+	mux.HandleFunc("POST /feedings", s.handleFeedingCreate)
+	mux.HandleFunc("GET /feedings/{id}", s.handleFeedingRow)
+	mux.HandleFunc("GET /feedings/{id}/edit", s.handleFeedingEditForm)
+	mux.HandleFunc("PATCH /feedings/{id}", s.handleFeedingUpdate)
+	mux.HandleFunc("DELETE /feedings/{id}", s.handleFeedingDelete)
+
+	mux.HandleFunc("POST /snacks", s.handleSnackCreate)
+	mux.HandleFunc("GET /snacks/{id}", s.handleSnackRow)
+	mux.HandleFunc("GET /snacks/{id}/edit", s.handleSnackEditForm)
+	mux.HandleFunc("PATCH /snacks/{id}", s.handleSnackUpdate)
+	mux.HandleFunc("DELETE /snacks/{id}", s.handleSnackDelete)
+
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 
 	// Catch-all: anything not matched above renders the 404 page.
@@ -166,9 +182,9 @@ type feedingView struct {
 }
 
 // handleDashboard renders per-dog status for the current local day: when each
-// dog was last fed and how well it ate. Read-only — quick-add lands with the
-// feeding surfaces in milestone 10. Errors degrade individual sections rather
-// than failing the page (the dashboard is the household's at-a-glance view).
+// dog was last fed and how well it ate, plus quick-add buttons (milestone 10).
+// Errors degrade individual sections rather than failing the page (the
+// dashboard is the household's at-a-glance view).
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	localNow := s.clk.Now().In(s.loc)
@@ -195,21 +211,37 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, d := range dogs {
-		ds := dogStatus{ID: d.ID, Name: d.Name, AccentColor: d.AccentColor, HasPhoto: d.PhotoPath != ""}
-		today := byDog[d.ID]
-		if len(today) > 0 {
-			last := toFeedingView(today[0])
-			ds.Last = &last
-			for i := len(today) - 1; i >= 0; i-- { // reverse to chronological
-				ds.Feedings = append(ds.Feedings, toFeedingView(today[i]))
-			}
-		}
-		data.Dogs = append(data.Dogs, ds)
+		data.Dogs = append(data.Dogs, dogStatusFromFeeds(d, byDog[d.ID]))
 	}
 
 	if err := s.tmpl.render(w, http.StatusOK, "dashboard", data); err != nil {
 		s.serverError(w, "dashboard", err)
 	}
+}
+
+// dogStatusFor builds one dog's status for the day starting at startUTC, used
+// to re-render a single card after a quick-add. It queries that dog's feedings
+// directly rather than the whole-household batch the dashboard uses.
+func (s *Server) dogStatusFor(ctx context.Context, d domain.Dog, startUTC time.Time) dogStatus {
+	feeds, err := s.store.ListFeedings(ctx, store.FeedingFilter{DogID: d.ID, Since: startUTC})
+	if err != nil {
+		s.log.Error("dog status feedings", "dog", d.ID, "err", err)
+	}
+	return dogStatusFromFeeds(d, feeds)
+}
+
+// dogStatusFromFeeds assembles a dogStatus from that dog's feedings for the day
+// (newest-first, as the store returns them).
+func dogStatusFromFeeds(d domain.Dog, feeds []domain.Feeding) dogStatus {
+	ds := dogStatus{ID: d.ID, Name: d.Name, AccentColor: d.AccentColor, HasPhoto: d.PhotoPath != ""}
+	if len(feeds) > 0 {
+		last := toFeedingView(feeds[0])
+		ds.Last = &last
+		for i := len(feeds) - 1; i >= 0; i-- { // reverse to chronological
+			ds.Feedings = append(ds.Feedings, toFeedingView(feeds[i]))
+		}
+	}
+	return ds
 }
 
 func toFeedingView(f domain.Feeding) feedingView {
