@@ -45,22 +45,27 @@ type Deps struct {
 	// PhotoMaxKB / PhotoMaxPx bound uploaded photos (size and largest edge).
 	PhotoMaxKB int
 	PhotoMaxPx int
+	// DogsChanged, if set, is invoked after a dog is created, updated, or
+	// deleted, so the device's state machine can reload its dog list. Optional:
+	// nil disables the notification (e.g. in tests, or web-only deployments).
+	DogsChanged func()
 }
 
 // Server holds the parsed templates and request handlers.
 type Server struct {
-	store      *store.Store
-	log        *slog.Logger
-	clk        clock.Clock
-	loc        *time.Location
-	version    string
-	host       string
-	photoDir   string
-	photoMaxKB int
-	photoMaxPx int
-	startedAt  time.Time
-	tmpl       *templates
-	mux        *http.ServeMux
+	store       *store.Store
+	log         *slog.Logger
+	clk         clock.Clock
+	loc         *time.Location
+	version     string
+	host        string
+	photoDir    string
+	photoMaxKB  int
+	photoMaxPx  int
+	dogsChanged func()
+	startedAt   time.Time
+	tmpl        *templates
+	mux         *http.ServeMux
 }
 
 // New builds a Server with its routes and parsed templates.
@@ -79,17 +84,18 @@ func New(d Deps) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		store:      d.Store,
-		log:        d.Log.With("component", "web.handler"),
-		clk:        d.Clk,
-		loc:        d.Loc,
-		version:    d.Version,
-		host:       d.Host,
-		photoDir:   d.PhotoDir,
-		photoMaxKB: d.PhotoMaxKB,
-		photoMaxPx: d.PhotoMaxPx,
-		startedAt:  d.Clk.Now(),
-		tmpl:       tmpl,
+		store:       d.Store,
+		log:         d.Log.With("component", "web.handler"),
+		clk:         d.Clk,
+		loc:         d.Loc,
+		version:     d.Version,
+		host:        d.Host,
+		photoDir:    d.PhotoDir,
+		photoMaxKB:  d.PhotoMaxKB,
+		photoMaxPx:  d.PhotoMaxPx,
+		dogsChanged: d.DogsChanged,
+		startedAt:   d.Clk.Now(),
+		tmpl:        tmpl,
 	}
 	s.routes()
 	return s, nil
@@ -187,6 +193,14 @@ type baseData struct {
 
 func (s *Server) base(nav string) baseData {
 	return baseData{Version: s.version, Host: s.host, Nav: nav}
+}
+
+// notifyDogsChanged tells the device (if wired) to reload its dog list after a
+// successful dog create/update/delete. No-op when DogsChanged was not provided.
+func (s *Server) notifyDogsChanged() {
+	if s.dogsChanged != nil {
+		s.dogsChanged()
+	}
 }
 
 // ----------------------------- dashboard ------------------------------------

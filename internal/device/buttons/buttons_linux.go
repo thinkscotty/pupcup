@@ -90,17 +90,23 @@ func (d *linuxDriver) watch(color domain.ButtonColor, p gpio.PinIO) {
 			continue
 		}
 		now := time.Now()
-		if !last.IsZero() && now.Sub(last) < d.debounce {
-			continue
-		}
-		// Re-read to settle bounce and classify the edge. Active-low: Low is a
-		// press, High a release. Drop edges that didn't change the level.
+		// Re-read to settle bounce and classify the edge BEFORE the debounce
+		// decision. Active-low: Low is a press, High a release. Reading first is
+		// essential: if we skipped a transition inside the debounce window without
+		// updating lastLvl, the cached level would invert and silently swap
+		// press/release on every later edge — wedging the held-button set.
 		lvl := p.Read()
 		if lvl == lastLvl {
-			continue
+			continue // no net change since the last edge (settled bounce / glitch)
 		}
+		within := !last.IsZero() && now.Sub(last) < d.debounce
+		// Always track the live level so the cache can't desync; advance `last`
+		// so emitting only resumes after a full debounce of quiet.
 		lastLvl = lvl
 		last = now
+		if within {
+			continue // still bouncing: level tracked, but suppress the event
+		}
 		action := ActionRelease
 		if lvl == gpio.Low {
 			action = ActionPress

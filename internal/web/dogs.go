@@ -131,6 +131,7 @@ func (s *Server) handleDogCreate(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("attach photo", "dog", dog.ID, "err", uerr)
 		}
 	}
+	s.notifyDogsChanged()
 	s.flashRedirect(w, r, "/dogs", "ok", "added "+name)
 }
 
@@ -188,6 +189,7 @@ func (s *Server) handleDogUpdate(w http.ResponseWriter, r *http.Request) {
 		s.flashRedirect(w, r, "/dogs", "err", "couldn't save changes")
 		return
 	}
+	s.notifyDogsChanged()
 	s.flashRedirect(w, r, "/dogs", "ok", "updated "+name)
 }
 
@@ -217,6 +219,7 @@ func (s *Server) handleDogDelete(w http.ResponseWriter, r *http.Request) {
 	if photoPath != "" {
 		s.removePhotoFile(photoPath)
 	}
+	s.notifyDogsChanged()
 	s.flashRedirect(w, r, "/dogs", "ok", "removed dog")
 }
 

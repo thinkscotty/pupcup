@@ -18,15 +18,15 @@ import (
 )
 
 type harness struct {
-	m       *Machine
-	clk     *clock.Fake
-	store   *store.Store
-	bus     *eventbus.Bus
-	btn     *buttons.Fake
-	rot     *rotary.Fake
-	oled    *oled.Fake
-	leds    *neopixel.Fake
-	ctx     context.Context
+	m     *Machine
+	clk   *clock.Fake
+	store *store.Store
+	bus   *eventbus.Bus
+	btn   *buttons.Fake
+	rot   *rotary.Fake
+	oled  *oled.Fake
+	leds  *neopixel.Fake
+	ctx   context.Context
 }
 
 func newHarness(t *testing.T, dogNames ...string) *harness {
@@ -82,7 +82,7 @@ func newHarness(t *testing.T, dogNames ...string) *harness {
 	m, err := New(Deps{
 		Cfg:     &cfg,
 		Log:     slog.Default(),
-		Clk:    clk,
+		Clk:     clk,
 		Bus:     bus,
 		Store:   st,
 		Buttons: h.btn,
@@ -421,5 +421,80 @@ func TestEventBus_PublishesFeedings(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no event")
+	}
+}
+
+// TestRun_NotifyDogsChanged_ReloadsDogs covers the web→device refresh wiring:
+// a dog added to the store (as a web create would) becomes visible to the
+// running machine after NotifyDogsChanged, with no restart. Exercises the real
+// production path (the buffered signal + the Run-loop select case), not just
+// the reload helper.
+func TestRun_NotifyDogsChanged_ReloadsDogs(t *testing.T) {
+	h := newHarness(t, "Cleo")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- h.m.Run(ctx) }()
+
+	if _, err := h.store.CreateDog(ctx, domain.Dog{Name: "Rio", AccentColor: "#A8D8B9", SortOrder: 1}); err != nil {
+		t.Fatal(err)
+	}
+	h.m.NotifyDogsChanged()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h.m.mu.RLock()
+		n := len(h.m.dogs)
+		h.m.mu.RUnlock()
+		if n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("machine did not reload dogs after NotifyDogsChanged; have %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestReloadDogs_ClampsSelection verifies a deletion that shrinks the list
+// below the current selection resets the cursor rather than leaving it past the
+// end (which would panic m.dogs[m.sel] on the next render/select).
+func TestReloadDogs_ClampsSelection(t *testing.T) {
+	h := newHarness(t, "Cleo", "Rio", "Pip")
+	h.fireRot(t, rotary.RotateCW)
+	h.fireRot(t, rotary.RotateCW) // select index 2 (Pip)
+	if got := h.m.SelectedDog().Name; got != "Pip" {
+		t.Fatalf("pre-condition: selected = %q, want Pip", got)
+	}
+
+	// Soft-delete the two dogs after the selection (fresh dogs have no history).
+	for _, name := range []string{"Rio", "Pip"} {
+		dogs, _ := h.store.ListDogs(h.ctx)
+		for _, d := range dogs {
+			if d.Name == name {
+				if err := h.store.SoftDeleteDog(h.ctx, d.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+
+	h.m.reloadDogs(h.ctx)
+
+	h.m.mu.RLock()
+	n, sel := len(h.m.dogs), h.m.sel
+	h.m.mu.RUnlock()
+	if n != 1 {
+		t.Fatalf("dogs after reload = %d, want 1", n)
+	}
+	if sel != 0 {
+		t.Fatalf("sel after reload = %d, want clamped to 0", sel)
+	}
+	if got := h.m.SelectedDog().Name; got != "Cleo" {
+		t.Fatalf("selected = %q, want Cleo", got)
 	}
 }

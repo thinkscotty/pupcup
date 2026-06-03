@@ -66,6 +66,9 @@ func run() error {
 	}
 	defer st.Close()
 
+	// In-process event bus. v1 has no live web push (web pages reflect state on
+	// load), so the device's published events currently have no subscriber; the
+	// wiring stays in place for a future SSE / Home Assistant phase.
 	bus := eventbus.New(64, log)
 	defer bus.Close()
 
@@ -166,6 +169,9 @@ func run() error {
 		PhotoDir:   cfg.PhotoDir,
 		PhotoMaxKB: cfg.PhotoMaxKB,
 		PhotoMaxPx: cfg.PhotoMaxPx,
+		// Reload the device's dog list when a dog is added/edited/removed on the
+		// web, so the rotary/OLED reflect changes without a daemon restart.
+		DogsChanged: machine.NotifyDogsChanged,
 	})
 	if err != nil {
 		return fmt.Errorf("web: %w", err)

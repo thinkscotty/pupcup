@@ -122,6 +122,12 @@ type Machine struct {
 	// chord forms (a meal joins the hold) or the hold is otherwise consumed, so
 	// a snack-recording Blue tap in SnackMode doesn't re-enter snack on release.
 	blueArmed bool
+
+	// refresh carries a non-blocking signal (from NotifyDogsChanged, called by
+	// the web layer after a dog is created/edited/deleted) telling the run loop
+	// to reload the dog list. Reloading on the run goroutine — rather than from
+	// the caller's — keeps all OLED/LED rendering single-threaded.
+	refresh chan struct{}
 }
 
 // pendingFeeding is an in-memory meal opened on a meal-button press, awaiting
@@ -159,6 +165,7 @@ func New(d Deps) (*Machine, error) {
 		mealSession:  map[int64]domain.Score{},
 		snackSession: map[int64]bool{},
 		held:         map[domain.ButtonColor]bool{},
+		refresh:      make(chan struct{}, 1),
 	}, nil
 }
 
@@ -213,6 +220,9 @@ func (m *Machine) Run(ctx context.Context) error {
 				return errors.New("state: rotary driver closed")
 			}
 			m.onRotary(ctx, ev)
+
+		case <-m.refresh:
+			m.reloadDogs(ctx)
 
 		case <-tick.C:
 			m.onTick(ctx)
@@ -278,12 +288,24 @@ func (m *Machine) rehydrateMealSession(ctx context.Context) {
 	}
 }
 
-// RefreshDogs re-loads the dog list (call after web edits create/delete dogs).
-// Safe to call concurrently with Run.
-func (m *Machine) RefreshDogs(ctx context.Context) {
+// NotifyDogsChanged asks the run loop to reload the dog list after a web edit
+// creates/updates/deletes a dog. Non-blocking and safe to call from any
+// goroutine — including before Run starts: the buffered, coalesced signal is
+// applied on the next loop iteration. The reload itself happens on the run
+// goroutine (see reloadDogs) so it never races the loop's own rendering.
+func (m *Machine) NotifyDogsChanged() {
+	select {
+	case m.refresh <- struct{}{}:
+	default: // a reload is already pending; coalesce
+	}
+}
+
+// reloadDogs re-reads the dog list and re-renders. Called only from the run
+// loop (via the refresh channel), keeping OLED/LED I/O single-threaded.
+func (m *Machine) reloadDogs(ctx context.Context) {
 	dogs, err := m.d.Store.ListDogs(ctx)
 	if err != nil {
-		m.d.Log.Warn("refresh dogs", "err", err)
+		m.d.Log.Warn("reload dogs", "err", err)
 		return
 	}
 	m.mu.Lock()

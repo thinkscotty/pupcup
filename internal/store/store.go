@@ -65,11 +65,18 @@ func Open(path string) (*Store, error) {
 func buildDSN(path string) string {
 	if path == "" || path == ":memory:" {
 		// Shared cache so multiple goroutines using one *sql.DB see the same
-		// in-memory DB. _pragma honored by modernc driver.
-		return "file::memory:?cache=shared&_pragma=foreign_keys(1)"
+		// in-memory DB. _pragma honored by modernc driver, applied per connection.
+		return "file::memory:?cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	}
+	// Set pragmas via the DSN so EVERY pooled connection inherits them, not just
+	// whichever one runs the one-shot startup Exec below. foreign_keys is
+	// per-connection (must be re-applied on each); busy_timeout makes a writer
+	// wait up to 5s rather than fail instantly should a second connection ever
+	// contend (e.g. if MaxOpenConns is raised, or an external sqlite client opens
+	// the file).
 	v := url.Values{}
-	v.Set("_pragma", "foreign_keys(1)")
+	v.Add("_pragma", "foreign_keys(1)")
+	v.Add("_pragma", "busy_timeout(5000)")
 	return "file:" + path + "?" + v.Encode()
 }
 
