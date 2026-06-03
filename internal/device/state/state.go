@@ -931,26 +931,104 @@ func (m *Machine) render(ctx context.Context) {
 		m.d.Log.Warn("oled render", "err", err)
 	}
 
-	// LEDs: solid green when locked, off otherwise. Snack mode: gentle blue pulse.
-	var color neopixel.Color
+	// LEDs: the locked summary shows each dog's meal quality as a colored
+	// segment across the bar (see summaryFrame); snack mode is a gentle blue
+	// pulse; the add-in picker is steady amber; everything else is dark.
+	frame := make([]neopixel.Color, m.d.LEDs.N())
 	switch mode {
 	case ModeLockedSummary:
-		color = neopixel.Color{G: 32}
+		scores := make([]neopixel.Color, len(dogs))
+		for i, d := range dogs {
+			scores[i] = scoreColor(mealSession[d.ID])
+		}
+		if seg := summaryFrame(len(frame), scores); seg != nil {
+			frame = seg
+		} else {
+			// 4+ dogs (or a bar that isn't 8 pixels): no defined segment
+			// layout, so fall back to the original solid green = "fed".
+			fillFrame(frame, ledFull)
+		}
 	case ModeSnackMode:
 		// Crude pulse via second-resolution oscillation; refined animator can replace.
 		if now.Second()%2 == 0 {
-			color = neopixel.Color{B: 24}
+			fillFrame(frame, neopixel.Color{B: 24})
 		} else {
-			color = neopixel.Color{B: 8}
+			fillFrame(frame, neopixel.Color{B: 8})
 		}
 	case ModeAddInSelect:
 		// Steady amber while the add-in picker is open.
-		color = neopixel.Color{R: 28, G: 16}
+		fillFrame(frame, neopixel.Color{R: 28, G: 16})
 	}
-	if err := m.d.LEDs.SetAll(color); err != nil {
-		m.d.Log.Warn("led setall", "err", err)
+	for i, c := range frame {
+		if err := m.d.LEDs.SetPixel(i, c); err != nil {
+			m.d.Log.Warn("led setpixel", "i", i, "err", err)
+			break
+		}
 	}
 	if err := m.d.LEDs.Show(); err != nil {
 		m.d.Log.Warn("led show", "err", err)
 	}
+}
+
+// LED colors for the locked meal summary, tuned dim to sit alongside the
+// existing green (adjust on-device to taste): green = ate all, yellow = ate
+// some, red = refused. An un-fed dog (empty score) renders dark.
+var (
+	ledFull    = neopixel.Color{G: 32}
+	ledPartial = neopixel.Color{R: 40, G: 24}
+	ledNone    = neopixel.Color{R: 40}
+)
+
+// scoreColor maps a meal score to its LED segment color. An empty/unknown
+// score — a dog that never got a button press before a partial-meal lock —
+// renders dark.
+func scoreColor(s domain.Score) neopixel.Color {
+	switch s {
+	case domain.ScoreFull:
+		return ledFull
+	case domain.ScorePartial:
+		return ledPartial
+	case domain.ScoreNone:
+		return ledNone
+	default:
+		return neopixel.ColorOff
+	}
+}
+
+// fillFrame paints every pixel of frame the same color.
+func fillFrame(frame []neopixel.Color, c neopixel.Color) {
+	for i := range frame {
+		frame[i] = c
+	}
+}
+
+// summaryFrame lays out the per-dog meal-quality segments on an 8-pixel bar,
+// one color per dog in sort order:
+//
+//	1 dog : [0..7]
+//	2 dogs: [0..3] [4..7]
+//	3 dogs: [0,1] (2 dark) [3,4] (5 dark) [6,7]
+//
+// It returns nil when the (pixelCount, dogCount) pair has no defined layout
+// (4+ dogs, or a bar that isn't 8 pixels), signaling the caller to fall back
+// to a solid fill.
+func summaryFrame(pixelCount int, scores []neopixel.Color) []neopixel.Color {
+	if pixelCount != 8 {
+		return nil
+	}
+	frame := make([]neopixel.Color, 8)
+	switch len(scores) {
+	case 1:
+		fillFrame(frame, scores[0])
+	case 2:
+		frame[0], frame[1], frame[2], frame[3] = scores[0], scores[0], scores[0], scores[0]
+		frame[4], frame[5], frame[6], frame[7] = scores[1], scores[1], scores[1], scores[1]
+	case 3:
+		frame[0], frame[1] = scores[0], scores[0]
+		frame[3], frame[4] = scores[1], scores[1]
+		frame[6], frame[7] = scores[2], scores[2]
+	default:
+		return nil
+	}
+	return frame
 }

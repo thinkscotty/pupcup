@@ -194,10 +194,21 @@ func TestMealButtons_RecordAndAdvance(t *testing.T) {
 		scoreByDog[dogs[2].ID] != domain.ScoreNone {
 		t.Fatalf("scores: %+v", scoreByDog)
 	}
-	// LED bar should be green-ish.
+	// LED bar shows per-dog meal quality: Cleo full=green [0,1], spacer [2],
+	// Rio partial=yellow [3,4], spacer [5], Pip none=red [6,7].
 	last := h.leds.LastFrame()
-	if last == nil || last[0].G == 0 {
-		t.Fatalf("expected green LEDs, got %+v", last)
+	if last == nil {
+		t.Fatalf("no LED frame rendered")
+	}
+	want := []neopixel.Color{
+		ledFull, ledFull, neopixel.ColorOff,
+		ledPartial, ledPartial, neopixel.ColorOff,
+		ledNone, ledNone,
+	}
+	for i := range want {
+		if last[i] != want[i] {
+			t.Fatalf("LED[%d] = %+v, want %+v (full frame %+v)", i, last[i], want[i], last)
+		}
 	}
 	// OLED summary scene.
 	if _, ok := h.oled.Last().(oled.LockedSummaryScene); !ok {
@@ -496,5 +507,79 @@ func TestReloadDogs_ClampsSelection(t *testing.T) {
 	}
 	if got := h.m.SelectedDog().Name; got != "Cleo" {
 		t.Fatalf("selected = %q, want Cleo", got)
+	}
+}
+
+func TestScoreColor(t *testing.T) {
+	cases := []struct {
+		score domain.Score
+		want  neopixel.Color
+	}{
+		{domain.ScoreFull, ledFull},
+		{domain.ScorePartial, ledPartial},
+		{domain.ScoreNone, ledNone},
+		{domain.Score(""), neopixel.ColorOff}, // un-fed dog at a partial-meal lock
+		{domain.Score("bogus"), neopixel.ColorOff},
+	}
+	for _, c := range cases {
+		if got := scoreColor(c.score); got != c.want {
+			t.Errorf("scoreColor(%q) = %+v, want %+v", c.score, got, c.want)
+		}
+	}
+}
+
+func TestSummaryFrame(t *testing.T) {
+	g, y, r := ledFull, ledPartial, ledNone
+	off := neopixel.ColorOff
+
+	tests := []struct {
+		name   string
+		pixels int
+		scores []neopixel.Color
+		want   []neopixel.Color
+	}{
+		{
+			name: "one dog fills the bar",
+			pixels: 8, scores: []neopixel.Color{g},
+			want: []neopixel.Color{g, g, g, g, g, g, g, g},
+		},
+		{
+			name: "two dogs split 4/4, no gap",
+			pixels: 8, scores: []neopixel.Color{g, r},
+			want: []neopixel.Color{g, g, g, g, r, r, r, r},
+		},
+		{
+			name: "three dogs: 2-gap-2-gap-2",
+			pixels: 8, scores: []neopixel.Color{g, y, r},
+			want: []neopixel.Color{g, g, off, y, y, off, r, r},
+		},
+		{
+			name: "four dogs has no layout -> nil (caller falls back)",
+			pixels: 8, scores: []neopixel.Color{g, g, g, g},
+			want: nil,
+		},
+		{
+			name: "non-8-pixel bar -> nil",
+			pixels: 12, scores: []neopixel.Color{g, y, r},
+			want: nil,
+		},
+		{
+			name: "zero dogs -> nil",
+			pixels: 8, scores: nil,
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := summaryFrame(tt.pixels, tt.scores)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d (got %+v)", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("pixel[%d] = %+v, want %+v (full %+v)", i, got[i], tt.want[i], got)
+				}
+			}
+		})
 	}
 }
