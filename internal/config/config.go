@@ -74,7 +74,7 @@ func Default() Config {
 		I2CBus:        1,
 		OLEDAddr:      0x3C,
 		NeopixelCount: 8,
-		ButtonPins:    ButtonPins{Green: 21, Yellow: 16, Red: 12, Blue: 20},
+		ButtonPins:    ButtonPins{Green: 12, Yellow: 16, Red: 21, Blue: 20},
 		RotaryPins:    RotaryPins{CLK: 17, DT: 27, SW: 22},
 
 		ButtonDebounceMS: 25,

@@ -19,9 +19,9 @@ oled_addr: 0x3C                            # SSD1306 128x64
 neopixel_count: 8                          # SK6812 stick length
 
 button_pins:
-  green: 21
+  green: 12
   yellow: 16
-  red: 12
+  red: 21
   blue: 20                                 # snack / add-in chord
 
 rotary_pins:
