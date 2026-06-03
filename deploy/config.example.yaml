@@ -18,16 +18,12 @@ i2c_bus: 1                                 # OLED + DS1307 share bus 1
 oled_addr: 0x3C                            # SSD1306 128x64
 neopixel_count: 8                          # SK6812 stick length
 
-button_pins:
-  green: 12
-  yellow: 16
-  red: 21
-  blue: 20                                 # snack / add-in chord
-
-rotary_pins:
-  clk: 17
-  dt: 27
-  sw: 22                                   # long-press clears the post-meal lock
+# button_pins / rotary_pins are fixed, soldered BCM assignments — they come
+# from the binary's built-in defaults (internal/config Default(), the source
+# of truth) so a pin correction ships with a normal deploy instead of needing
+# a hand-edit here. Override per-device only if you must, via env vars
+# (PUPCUP_BUTTON_PINS_GREEN, PUPCUP_ROTARY_PINS_CLK, …) or by re-adding the
+# button_pins:/rotary_pins: blocks below.
 
 button_debounce_ms: 25
 rotary_debounce_ms: 5                      # retained for compat; the Buxton decoder ignores it
