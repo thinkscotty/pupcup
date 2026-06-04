@@ -350,30 +350,57 @@ Detachable headers matter: bench testing the LCD (or OLED), rotary, NeoPixel, an
 
 ## 8. Hardware bring-up tests
 
-Run these before bringing up the full Go application. Each isolates one subsystem.
+Test each peripheral **in isolation before you commit to the enclosure** — a
+crossed wire is far easier to fix on an open board than after everything is
+mounted. There are two layers to lean on:
 
-### 8.1 Display — GC9A01 SPI1 probe (default)
-Confirm the SPI nodes exist, then run the LCD probe:
-```sh
-ls /dev/spidev*                 # expect /dev/spidev0.0 and /dev/spidev1.0
-```
-The `cmd/hwprobe/lcd` probe color-cycles the panel (red → green → blue → white →
-black) and draws a quadrant/crosshair test pattern. Cross-compile and run it
-(see [hardware_test_setup.md](../hardware_test_setup.md)):
+1. **The bundled Go probes** (recommended first check). The repo ships five
+   standalone programs under [cmd/hwprobe/](../cmd/hwprobe/) — one per peripheral
+   — that exercise the *exact* drivers the application uses, with the wiring
+   defaults already baked in. This is the highest-confidence "does it work" test.
+2. **Raw userspace tools** (`gpioget`, `gpiomon`, `i2cdetect`, `spi-pipe`) as a
+   fallback. When a probe fails, drop a layer down to tell a wiring/kernel
+   problem apart from an application bug.
+
+The probes:
+
+| Probe | Build target | Exercises |
+|---|---|---|
+| `hwprobe-lcd` | `./cmd/hwprobe/lcd` | GC9A01 240×240 round LCD on SPI1 (default display) |
+| `hwprobe-oled` | `./cmd/hwprobe/oled` | SSD1306 128×64 OLED on I²C `0x3C` (OLED variant) |
+| `hwprobe-neopixel` | `./cmd/hwprobe/neopixel` | 8× SK6812 LED bar over SPI0 (via 74AHCT125) |
+| `hwprobe-buttons` | `./cmd/hwprobe/buttons` | 4 buttons on GPIO 12/16/5/6 |
+| `hwprobe-rotary` | `./cmd/hwprobe/rotary` | KY-040 encoder + push switch on GPIO 17/27/22 |
+
+They cross-compile to `linux/arm64` (the Pi 3B+ is 64-bit) and copy over with
+`scp` — pure Go, no `CGO`. The pattern for each:
+
 ```sh
 GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-lcd ./cmd/hwprobe/lcd
 scp /tmp/hwprobe-lcd pupcup@pupcup.local:/tmp/
 ssh pupcup@pupcup.local /tmp/hwprobe-lcd
 ```
-Colors should be true (no red/blue swap — the driver's `MADCTL 0x36=0x08` BGR
-setting is already correct). Garbage or tearing usually means `core_freq` wasn't
-pinned, or the DC/RST wiring (BCM 25 / BCM 24) is crossed.
 
-*(OLED variant only.)* Instead scan I²C:
+> The probes run **without `sudo`** once your login user is in the `gpio`, `spi`,
+> (and `i2c`, on the OLED variant) groups — the installer and the manual setup
+> both add it. **[hardware_test_setup.md](../hardware_test_setup.md)** is the
+> full copy-paste walkthrough — building all five at once, the recommended run
+> order, and pass/fail criteria for each. The subsections below summarize what
+> each test confirms and what a failure points at.
+
+### 8.1 Display — GC9A01 round LCD (default)
+Confirm the SPI nodes exist, then run the LCD probe:
 ```sh
-sudo i2cdetect -y 1
+ls /dev/spidev*                 # expect /dev/spidev0.0 and /dev/spidev1.0
+GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-lcd ./cmd/hwprobe/lcd
+scp /tmp/hwprobe-lcd pupcup@pupcup.local:/tmp/ && ssh pupcup@pupcup.local /tmp/hwprobe-lcd
 ```
-Expected: `0x3C` (or `0x3D` if your OLED has the alt-address jumper). Anything else = bad bus, swapped SDA/SCL, missing pull-ups, or a short. The default GC9A01 build uses no I²C — skip this.
+The probe color-cycles the panel (red → green → blue → white) and draws a test
+pattern. Colors should be true (no red/blue swap — the driver's `MADCTL
+0x36=0x08` BGR setting is already correct). Garbage or tearing usually means
+`core_freq` wasn't pinned, or the DC/RST wiring (BCM 25 / BCM 24) is crossed; a
+blank panel means `/dev/spidev1.0` is missing (re-check the `dtoverlay=spi1-1cs`
+line). *(On the OLED variant, use the OLED probe in [§11](#11-building-the-oled-variant-ssd1306) instead.)*
 
 ### 8.2 Timekeeping
 ```sh
@@ -385,39 +412,59 @@ Pull mains power for ten minutes, reconnect **with wifi unavailable**, and check
 the persisted clock), *not* 1970. Once wifi returns, `timedatectl` should flip to
 synchronized within a minute or two. (There is no hardware RTC to test.)
 
-### 8.3 GPIO buttons
-A small one-liner via the `gpiod` user-space tools (Trixie ships `libgpiod` **v2**, whose CLI requires the chip via `-c`):
+### 8.3 Buttons
+Run the probe, then press each colored button:
 ```sh
-sudo apt install -y gpiod
+GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-buttons ./cmd/hwprobe/buttons
+scp /tmp/hwprobe-buttons pupcup@pupcup.local:/tmp/ && ssh pupcup@pupcup.local /tmp/hwprobe-buttons
+```
+Each press prints a line naming the color. **Pass:** all four colors register.
+**Fail:** drop to the raw tool — `libgpiod` v2 (Trixie) needs the chip via `-c`:
+```sh
 gpioget -c gpiochip0 --bias=pull-up 12 16 5 6     # GREEN YELLOW RED BLUE
 ```
-Press each button while watching the output: held button shows `"<pin>"=inactive`, released shows `"<pin>"=active`. Repeat for each.
+A held button reads `"<pin>"=inactive`, released reads `"<pin>"=active`. Nothing
+at all = wiring at the screw terminals; one silent button = a dead contact or a
+shorted GPIO.
 
 ### 8.4 Rotary encoder
 ```sh
-gpioget -c gpiochip0 --bias=pull-up 17 27 22
+GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-rotary ./cmd/hwprobe/rotary
+scp /tmp/hwprobe-rotary pupcup@pupcup.local:/tmp/ && ssh pupcup@pupcup.local /tmp/hwprobe-rotary
+```
+Turn clockwise → `cw`, counter-clockwise → `ccw`, press the shaft → `press`/`release`.
+**Pass:** both directions and the click register. If only one direction shows,
+isolate at the OS level before suspecting the driver:
+```sh
 gpiomon -c gpiochip0 --bias=pull-up --edges=both 17 27 22
 ```
-Rotate the dial — you should see CLK and DT toggle; the relative phase indicates direction. Press the encoder shaft and pin 22 should drop briefly.
+If only one of CLK (17) / DT (27) toggles → wiring fault or flaky encoder. If
+both toggle but the probe still sees one direction → driver decode bug. (The
+driver uses the table-based Buxton decoder specifically because the naive
+"sample DT on CLK edge" method emits a spurious reverse on this KY-040.)
 
-### 8.5 SPI loopback (sanity)
-With nothing connected to MOSI yet:
+### 8.5 NeoPixel LED bar
+```sh
+GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-neopixel ./cmd/hwprobe/neopixel
+scp /tmp/hwprobe-neopixel pupcup@pupcup.local:/tmp/ && ssh pupcup@pupcup.local /tmp/hwprobe-neopixel
+```
+The probe runs solid red→green→blue→white, a walking pixel, then a green fade —
+about 8 seconds. **Pass:** all eight pixels light, no flicker, the walking pixel
+passes cleanly. **Fail (first pixel wrong color):** suspect the 74AHCT125 wiring
+or a too-long data trace. **Fail (flicker / random pixels):** a missing ground
+tie or the missing 470 Ω series resistor.
+
+As a pre-wiring sanity check that SPI0 itself is enabled (nothing need be
+connected):
 ```sh
 sudo apt install -y spi-tools
 echo -ne '\xAA\x55\xAA\x55' | spi-pipe -d /dev/spidev0.0 -s 2400000 | xxd
 ```
-You won't get the same bytes back without wiring MISO→MOSI loopback, but the command running without error confirms SPI is enabled.
+You won't get the bytes back without a MISO→MOSI loopback, but the command
+running without error confirms the bus exists.
 
-### 8.6 NeoPixel walking-pixel test
-A 30-line test program (to be added under `cmd/hwprobe/neopixel/` in the source tree) writes a buffered SK6812 frame at 2.4 MHz where one pixel is dim white and the rest are off, advancing the lit pixel every 250 ms. Compile on the Pi (`go build`) and run as the `pupcup` user (member of `spi` group). All eight LEDs should light briefly in sequence with no flicker. If the first LED shows the wrong color (typical: green when you expected red), suspect level-shifter wiring or a too-long data trace.
-
-### 8.7 OLED hello (OLED variant only)
-On the `display: oled` build, the `cmd/hwprobe/oled` probe writes "PupCup ✓" to
-the SSD1306 at 128×64. Confirms I²C address, init sequence, and orientation. (Some
-modules ship rotated.) The default GC9A01 build covers its display check in §8.1
-instead.
-
-Once all bring-up tests pass, the hardware is ready for the application.
+Once all of these pass, the hardware is ready for the application. The OLED
+variant's display check is covered in [§11](#11-building-the-oled-variant-ssd1306).
 
 ## 9. Safety, troubleshooting, and known footguns
 
@@ -446,3 +493,105 @@ Once all bring-up tests pass, the hardware is ready for the application.
 - The 5V rail measures 4.95–5.10 V at the Pi 5V pin and at the LED Vcc terminal under "all eight LEDs white" load.
 
 When all of the above pass, the device is ready for the software build (see [pupcup_build_plan.md](pupcup_build_plan.md)).
+
+## 11. Building the OLED variant (SSD1306)
+
+Everything above describes the **default GC9A01 round LCD** build. PupCup also
+supports a cheaper, easier-to-source **0.96" SSD1306 OLED** (128×64 mono, I²C) —
+the same one binary drives either panel, chosen by the `display:` config field.
+This section collects **every difference** for the OLED build in one place; treat
+it as a patch over the GC9A01 reference build, not a separate procedure.
+
+### 11.1 Why you might pick it
+- A few dollars cheaper and stocked everywhere (Adafruit, generic 4-pin modules).
+- Only 4 wires (Vcc/GND/SCL/SDA) vs. the LCD's 7, and no `core_freq` pinning.
+- The trade-offs: 128×64 monochrome instead of 240×240 full color, and it puts
+  the device back on the I²C bus (the GC9A01 build uses no I²C at all).
+
+### 11.2 BOM deltas
+- **Add:** one SSD1306 128×64 I²C OLED (4-pin: Vcc/GND/SCL/SDA, address `0x3C`).
+- **Add (only if your module lacks them):** 2× 1.8 kΩ–4.7 kΩ I²C pull-ups
+  (SDA→3.3V, SCL→3.3V). Most modules already include them — verify with a
+  multimeter before adding.
+- **Drop:** the GC9A01 LCD module and its 1×7 display header (a 1×4 header
+  suffices for the OLED).
+
+### 11.3 Wiring deltas
+The buttons, rotary, NeoPixel, power, and ground are **identical** to the
+GC9A01 build. Only the display changes — instead of the SPI1 LCD, wire the OLED
+on I²C bus 1:
+
+| Signal | GPIO | Header pin | Notes |
+|---|---|---|---|
+| I²C SDA | GPIO 2 | 3 | SSD1306 `0x3C` |
+| I²C SCL | GPIO 3 | 5 | Same bus |
+| OLED Vcc | — | 1 / 17 (3.3V) | Most modules accept 3.3V or 5V; use 3.3V |
+| OLED GND | — | 6 (star) | — |
+
+The GC9A01's SPI1 pins (BCM 21/20/18 SCLK/MOSI/CE0) and the DC/RST pins (BCM
+25/24) are simply **unused** on this build. The RED/BLUE buttons stay on GPIO
+5/6 — they moved off 20/21 for the GC9A01 build and there's no need to move them
+back. Confirm the bus with a multimeter: SDA and SCL should each sit near 3.3V
+(weak pull-up) when idle; sitting low = a short, floating = missing pull-ups.
+
+### 11.4 `config.txt` deltas
+Replace the three GC9A01 lines with the single I²C line (keep `dtparam=spi=on`
+for the NeoPixel). Under the `[all]` section, with **no inline comments**:
+
+```
+dtparam=spi=on        # NeoPixel on SPI0 — unchanged
+dtparam=i2c_arm=on    # SSD1306 on I²C bus 1 (replaces the spi1-1cs / core_freq lines)
+```
+
+Then load the userspace I²C node module so `/dev/i2c-1` appears (the dtparam
+enables the controller; this exposes the device node `i2cdetect` and the driver
+open):
+
+```sh
+echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf
+```
+
+Also add your login user to the `i2c` group (alongside `gpio`/`spi`):
+`sudo usermod -aG gpio,i2c,spi <user>`.
+
+> The one-line installer does all of this for you when you pass
+> `--display oled` — it writes the `i2c_arm` dtparam instead of the SPI1 lines,
+> creates the `i2c-dev` module-load file, adds the `i2c` group, and sets
+> `display: oled` in the config. The deltas above are for a manual build.
+
+### 11.5 Config
+Set the panel in `/etc/pupcup/config.yaml`:
+
+```yaml
+display: "oled"     # default is "gc9a01"
+i2c_bus: 1
+oled_addr: 0x3C
+```
+
+The `lcd_*` fields are ignored on this build, and the `i2c_bus`/`oled_addr`
+fields (ignored on the GC9A01 build) take effect.
+
+### 11.6 Bring-up
+The display check in [§8.1](#8-hardware-bring-up-tests) is replaced by the I²C
+scan plus the OLED probe; everything else in §8 is unchanged.
+
+```sh
+sudo i2cdetect -y 1                                    # expect 0x3C (or 0x3D if the alt-address jumper is set)
+GOOS=linux GOARCH=arm64 go build -o /tmp/hwprobe-oled ./cmd/hwprobe/oled
+scp /tmp/hwprobe-oled pupcup@pupcup.local:/tmp/ && ssh pupcup@pupcup.local /tmp/hwprobe-oled
+```
+
+The probe cycles through four scenes (splash → dog selector → locked summary →
+snack mode), 2 s each. **Pass:** all four render legibly, right-side up.
+**Fail (blank):** `i2cdetect` shows nothing → swapped SDA/SCL, a `0x3D` jumper,
+missing pull-ups, or a short. **Fail (upside down):** a driver flip, not a wiring
+fault.
+
+### 11.7 Acceptance criteria deltas
+In the §10 checklist, substitute for the GC9A01 rows:
+- `/dev/spidev0.0` (NeoPixel) present **and** `i2cdetect -y 1` shows `0x3C`
+  (there is no `/dev/spidev1.0` on this build).
+- `hwprobe-oled` shows all four scenes legibly and right-side up.
+
+All other acceptance criteria (buttons, rotary, NeoPixel, timekeeping, 5V rail)
+are unchanged.

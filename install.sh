@@ -11,7 +11,7 @@
 #     curl -fsSLO https://raw.githubusercontent.com/thinkscotty/pupcup/main/install.sh
 #     sudo bash install.sh --display oled --timezone America/Chicago
 #
-# What it does, in order: provisions the OS (packages, I2C/SPI/RTC overlays,
+# What it does, in order: provisions the OS (packages, SPI/I2C overlays,
 # hardware groups), downloads the prebuilt release binary matching this Pi's
 # architecture and verifies its checksum, creates the unprivileged `pupcup`
 # service user + dirs + config + systemd unit, enables the service, and reboots
@@ -238,7 +238,7 @@ step "Install complete"
 cat <<EOF
 
   PupCup ($VERSION) is installed and enabled. After the reboot:
-    - the I2C/SPI buses and the RTC come up, then the service starts on its own
+    - the SPI/I2C buses come up, then the service starts on its own
     - dashboard:  http://$HOSTNAME_WANT.local/   (or the Pi's IP address)
     - logs:       journalctl -u pupcup -f
     - config:     /etc/pupcup/config.yaml   (sudo systemctl restart pupcup after edits)

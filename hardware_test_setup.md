@@ -366,7 +366,8 @@ Once all five are checked, hardware is ready for the full application (see [pupc
 
 Things that will get added as the project evolves:
 
-- A `deploy/deploy.sh` script to replace the manual cross-compile + scp loop (already referenced in [README.md](README.md) but not yet written).
-- A `deploy/config.example.yaml` sample file.
 - An `hwprobe-all` umbrella probe that runs every test in sequence with pass/fail summary.
 - Automated tests against a simulated GPIO backend so we can catch driver regressions on the dev machine before flashing.
+
+(The `deploy/deploy.sh` loop-replacer and the `deploy/config.example.yaml` sample
+file, once listed here, now exist — see [deploy/](deploy/).)

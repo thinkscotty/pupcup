@@ -34,8 +34,8 @@ lcd_spi_device: "/dev/spidev1.0"
 lcd_dc_pin: 25                             # data/command select (BCM)
 lcd_rst_pin: 24                            # reset (BCM)
 
-# SSD1306 OLED on I2C (used when display: oled). The DS1307 RTC shares bus 1
-# but is owned by the kernel rtc-ds1307 driver, not this app.
+# SSD1306 OLED on I2C (used when display: oled). The default GC9A01 build uses
+# no I2C at all, so these are ignored there.
 i2c_bus: 1
 oled_addr: 0x3C                            # SSD1306 128x64
 
