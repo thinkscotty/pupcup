@@ -2,7 +2,7 @@
 
 A single Go binary for a Raspberry Pi 3B+ that drives a physical button device and serves a local-network web app for tracking dog feedings.
 
-See [pupcup_build_plan.md](pupcup_build_plan.md) for architecture and [pupcup_hardware_build.md](pupcup_hardware_build.md) for the hardware build.
+See [pupcup_build_plan.md](docs/pupcup_build_plan.md) for architecture and [pupcup_hardware_build.md](docs/pupcup_hardware_build.md) for the hardware build.
 
 ## Install on a Raspberry Pi (one line)
 
@@ -21,8 +21,9 @@ running a 64-bit (or armv7) Raspberry Pi OS.
      | sudo bash -s -- --display gc9a01
    ```
 
-The installer enables I²C/SPI and the RTC, installs the matching prebuilt
-release binary (checksum-verified), creates the `pupcup` service, and reboots.
+The installer enables the SPI buses (plus I²C on the OLED variant), installs the
+matching prebuilt release binary (checksum-verified), creates the `pupcup`
+service, and reboots.
 When it comes back, the dashboard is at `http://<hostname>.local/`.
 
 Options: `--display gc9a01|oled`, `--timezone <IANA>`, `--hostname <name>`,
@@ -56,7 +57,7 @@ PUPCUP_LISTEN=:8080 PUPCUP_DB_PATH=./pupcup-dev.sqlite PUPCUP_PHOTO_DIR=./photos
 
 ## Cross-compile + deploy to Pi
 
-Deployment tooling lives in [deploy/](deploy/) — see [pupcup_build_plan.md](pupcup_build_plan.md) §10 for details.
+Deployment tooling lives in [deploy/](deploy/) — see [pupcup_build_plan.md](docs/pupcup_build_plan.md) §10 for details.
 
 **First time, on a fresh Pi** (run as a sudoer — the bring-up admin account, not the `nologin` `pupcup` service user):
 

@@ -156,21 +156,27 @@ timing drift.
 > echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf
 > ```
 
-### 2.4 Timekeeping — NTP + `fake-hwclock` (no RTC)
+### 2.4 Timekeeping (no RTC — nothing to configure)
 
-This build has **no battery-backed RTC** (a deliberate choice — it's bulk and
-cost for a rare, human-correctable failure). Timekeeping is therefore:
+This build has **no battery-backed RTC** (a deliberate choice — bulk and cost
+for a rare, human-correctable failure). On Raspberry Pi OS, `systemd-timesyncd`
+handles both halves of the job, so there is **nothing to set up here**:
 
-- **online** → NTP (`systemd-timesyncd`) keeps the clock accurate;
-- **offline** → `fake-hwclock`, which Raspberry Pi OS ships enabled, restores the
-  last-saved time on boot so the clock is roughly right until NTP catches up.
+- **online** → it syncs the clock over NTP;
+- **offline** → it persists the time to `/var/lib/systemd/timesync/clock` and, on
+  boot, advances the system clock to at least that saved timestamp *before* the
+  network comes up — so a cold boot never starts at 1970.
 
-**Leave `fake-hwclock` installed — do not remove it.** It's your only offline
-time source now. There's nothing to configure here; this section exists so you
-don't "helpfully" uninstall it. If the Pi ever boots offline (e.g. a power cut
-that also took down the router), feedings recorded before NTP re-syncs are
-flagged **"time unverified"** in the web app, so you can confirm or correct them
-later — no data is lost, just a timestamp to double-check.
+> **Don't try to use `fake-hwclock`.** Raspberry Pi OS ships its service masked
+> (`/usr/lib/systemd/system/fake-hwclock.service → /dev/null`, package-owned) on
+> purpose, because `systemd-timesyncd` replaces it. You can't `enable` it and
+> don't need to — `unmask` won't help (the mask is in the vendor dir).
+
+If the Pi ever boots offline (a power cut that also took down the router), the
+clock is restored to that last-saved time — close, but not exact — so any
+feeding recorded before NTP re-syncs is flagged **"time unverified"** in the web
+app. No data is lost; just confirm or correct the time later, which clears the
+flag. (§3 verifies `timedatectl` shows the clock synced.)
 
 ### 2.5 Give your login (`scotty`) hardware access
 

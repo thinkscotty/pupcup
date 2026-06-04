@@ -95,7 +95,7 @@ echo "    editing $CONFIG_TXT"
 
 # SPI0 (NeoPixel) is always on. The GC9A01 adds SPI1 (aux) + core_freq pinning,
 # whose clock derives from the core clock; the OLED variant uses I2C instead.
-# (No RTC — this build keeps fake-hwclock as its offline time fallback.)
+# (No RTC: systemd-timesyncd handles offline clock restore — see Timekeeping below.)
 block="# >>> pupcup >>>  (managed by install.sh — edits between the markers are overwritten on re-run)
 dtparam=spi=on"
 if [ "$DISPLAY_PANEL" = gc9a01 ]; then
@@ -123,10 +123,11 @@ if [ "$DISPLAY_PANEL" = oled ]; then
 fi
 
 # ---- Timekeeping -----------------------------------------------------------
-# No RTC on this build: NTP keeps time online, and fake-hwclock (shipped enabled
-# on Raspberry Pi OS) restores the last-saved time offline. We intentionally
-# KEEP fake-hwclock — feedings recorded before NTP sync are flagged
-# "time unverified" in the web app and corrected there. Nothing to do here.
+# No RTC, and nothing to configure: systemd-timesyncd syncs over NTP online and,
+# offline, restores the clock from /var/lib/systemd/timesync/clock on boot (before
+# the network is up). Raspberry Pi OS ships fake-hwclock's service masked because
+# timesyncd replaces it. Feedings recorded before NTP sync are flagged
+# "time unverified" in the web app and corrected there.
 
 # ---- service user + directories --------------------------------------------
 step "Creating the pupcup service user and directories"
