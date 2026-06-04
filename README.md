@@ -282,6 +282,7 @@ macOS while the real GPIO/SPI/I²C code only builds for the Pi.
 | [docs/initial_pi_flash.md](docs/initial_pi_flash.md) | Manual provisioning + verification/UAT checklist |
 | [docs/pupcup_build_plan.md](docs/pupcup_build_plan.md) | Architecture and the original build plan |
 | [deploy/config.example.yaml](deploy/config.example.yaml) | Every config key, documented, with defaults |
+| [docs/tech_stack.md](docs/tech_stack.md) | Languages, packages, build tooling, and CI overview |
 
 ## License
 
