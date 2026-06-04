@@ -2,7 +2,11 @@
 
 package oled
 
-import "log/slog"
+import (
+	"log/slog"
+
+	"github.com/scottyturner/pupcup/internal/device/display"
+)
 
 // Config is unused on stub platforms but kept so callers can share code.
 type Config struct {
@@ -11,8 +15,8 @@ type Config struct {
 }
 
 // New on non-Linux returns the Fake renderer so binaries link for laptop dev.
-func New(cfg Config, log *slog.Logger) (Renderer, error) {
+func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 	_ = cfg
 	_ = log
-	return NewFake(), nil
+	return display.NewFake(), nil
 }

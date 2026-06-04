@@ -121,10 +121,14 @@ type Feeding struct {
 	Score     Score
 	Specifics string
 	Source    Source
-	Tags      []FeedTag
-	DeletedAt *time.Time
-	EditedAt  *time.Time
-	CreatedAt time.Time
+	// TimeUnverified marks a feeding the device recorded before its system clock
+	// had synced (no RTC; NTP not yet reached). Its TS is a best guess; the web
+	// UI flags it so a human can confirm or correct the time, which clears this.
+	TimeUnverified bool
+	Tags           []FeedTag
+	DeletedAt      *time.Time
+	EditedAt       *time.Time
+	CreatedAt      time.Time
 }
 
 // Snack is a between-meals treat recording for a dog.

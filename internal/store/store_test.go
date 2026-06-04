@@ -186,6 +186,47 @@ func TestFeedingCRUD(t *testing.T) {
 	}
 }
 
+func TestFeedingTimeUnverified(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	d, _ := s.CreateDog(ctx, domain.Dog{Name: "Sky", AccentColor: "#A8D8B9"})
+	now := time.Date(2026, 4, 29, 8, 0, 0, 0, time.UTC)
+
+	// A feeding recorded before the clock synced carries the flag, and it
+	// round-trips through the store.
+	f, err := s.CreateFeeding(ctx, domain.Feeding{
+		DogID: d.ID, Kind: domain.FeedStandard, Score: domain.ScoreFull,
+		Source: domain.SourceButton, TS: now, TimeUnverified: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.TimeUnverified {
+		t.Fatal("CreateFeeding dropped TimeUnverified")
+	}
+	if got, _ := s.GetFeeding(ctx, f.ID); !got.TimeUnverified {
+		t.Fatal("TimeUnverified did not persist")
+	}
+
+	// A normal feeding is not flagged.
+	g, _ := s.CreateFeeding(ctx, domain.Feeding{
+		DogID: d.ID, Kind: domain.FeedStandard, Score: domain.ScoreFull,
+		Source: domain.SourceButton, TS: now,
+	})
+	if g.TimeUnverified {
+		t.Fatal("unflagged feeding came back unverified")
+	}
+
+	// A human edit confirms the time and clears the flag.
+	f.Score = domain.ScorePartial
+	if err := s.UpdateFeeding(ctx, f); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := s.GetFeeding(ctx, f.ID); after.TimeUnverified {
+		t.Fatal("editing the feeding did not clear TimeUnverified")
+	}
+}
+
 func TestSnackCRUD(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

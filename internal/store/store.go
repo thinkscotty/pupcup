@@ -264,6 +264,14 @@ func nullableString(s string) any {
 	return s
 }
 
+// boolToInt maps a Go bool to the 0/1 INTEGER SQLite stores for boolean columns.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func nullableInt64(p *int64) any {
 	if p == nil {
 		return nil
@@ -425,8 +433,8 @@ func (s *Store) CreateFeeding(ctx context.Context, f domain.Feeding) (domain.Fee
 		return domain.Feeding{}, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO feedings (dog_id, ts_utc, kind, score, specifics, source) VALUES (?, ?, ?, ?, ?, ?)`,
-		f.DogID, formatTime(f.TS), string(f.Kind), string(f.Score), nullableString(f.Specifics), string(f.Source))
+		`INSERT INTO feedings (dog_id, ts_utc, kind, score, specifics, source, time_unverified) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		f.DogID, formatTime(f.TS), string(f.Kind), string(f.Score), nullableString(f.Specifics), string(f.Source), boolToInt(f.TimeUnverified))
 	if err != nil {
 		return domain.Feeding{}, err
 	}
@@ -448,7 +456,7 @@ func (s *Store) GetFeeding(ctx context.Context, id int64) (domain.Feeding, error
 	return f, nil
 }
 
-const feedingSelect = `SELECT id, dog_id, ts_utc, kind, score, COALESCE(specifics,''), source, deleted_at, edited_at, created_at FROM feedings`
+const feedingSelect = `SELECT id, dog_id, ts_utc, kind, score, COALESCE(specifics,''), source, deleted_at, edited_at, created_at, time_unverified FROM feedings`
 
 // FeedingFilter narrows the result set for ListFeedings.
 type FeedingFilter struct {
@@ -510,14 +518,16 @@ func (s *Store) ListFeedings(ctx context.Context, f FeedingFilter) ([]domain.Fee
 	return out, nil
 }
 
-// UpdateFeeding edits ts, kind, score, specifics. Sets edited_at.
+// UpdateFeeding edits ts, kind, score, specifics. Sets edited_at, and clears
+// time_unverified: a human reviewing the feeding has confirmed/corrected its
+// time, so it's no longer an unverified device guess.
 func (s *Store) UpdateFeeding(ctx context.Context, f domain.Feeding) error {
 	if err := f.Validate(); err != nil {
 		return err
 	}
 	now := time.Now()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE feedings SET ts_utc=?, kind=?, score=?, specifics=?, edited_at=? WHERE id=? AND deleted_at IS NULL`,
+		`UPDATE feedings SET ts_utc=?, kind=?, score=?, specifics=?, edited_at=?, time_unverified=0 WHERE id=? AND deleted_at IS NULL`,
 		formatTime(f.TS), string(f.Kind), string(f.Score), nullableString(f.Specifics), formatTime(now), f.ID)
 	if err != nil {
 		return err
@@ -549,8 +559,9 @@ func scanFeeding(s scanner) (domain.Feeding, error) {
 		ts, created         string
 		del, edit           sql.NullString
 		kind, score, source string
+		unverified          int64
 	)
-	if err := s.Scan(&f.ID, &f.DogID, &ts, &kind, &score, &f.Specifics, &source, &del, &edit, &created); err != nil {
+	if err := s.Scan(&f.ID, &f.DogID, &ts, &kind, &score, &f.Specifics, &source, &del, &edit, &created, &unverified); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Feeding{}, ErrNotFound
 		}
@@ -564,6 +575,7 @@ func scanFeeding(s scanner) (domain.Feeding, error) {
 	f.Kind = domain.FeedKind(kind)
 	f.Score = domain.Score(score)
 	f.Source = domain.Source(source)
+	f.TimeUnverified = unverified != 0
 	if t, err := parseTime(created); err == nil {
 		f.CreatedAt = t
 	}

@@ -159,6 +159,7 @@ a { color: inherit; }
 .badge.score-partial { background: var(--yellow); }
 .badge.score-none { background: var(--red); }
 .badge.badge-idle { background: var(--line); color: rgba(58, 51, 43, 0.6); }
+.badge.badge-unverified { background: transparent; border: 1px solid var(--yellow); color: rgba(58, 51, 43, 0.75); }
 
 .dot {
   display: inline-block;

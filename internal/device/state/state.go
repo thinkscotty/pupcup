@@ -1,5 +1,5 @@
 // Package state implements the device state machine: it reads hardware
-// events from the buttons + rotary drivers, drives the OLED + NeoPixel
+// events from the buttons + rotary drivers, drives the display + NeoPixel
 // outputs, persists state via the SQLite store, and publishes domain events
 // on the in-process bus.
 //
@@ -28,8 +28,8 @@ import (
 	"github.com/scottyturner/pupcup/internal/clock"
 	"github.com/scottyturner/pupcup/internal/config"
 	"github.com/scottyturner/pupcup/internal/device/buttons"
+	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/neopixel"
-	"github.com/scottyturner/pupcup/internal/device/oled"
 	"github.com/scottyturner/pupcup/internal/device/rotary"
 	"github.com/scottyturner/pupcup/internal/domain"
 	"github.com/scottyturner/pupcup/internal/eventbus"
@@ -68,9 +68,13 @@ type Deps struct {
 	Bus   *eventbus.Bus
 	Store *store.Store
 
+	// Sync reports whether the system clock has NTP-synced. Optional: nil means
+	// "assume synced" (used by tests), so feedings are never flagged unverified.
+	Sync clock.Synchronizer
+
 	Buttons buttons.Driver
 	Rotary  rotary.Driver
-	OLED    oled.Renderer
+	Display display.Renderer
 	LEDs    neopixel.Strip
 }
 
@@ -112,7 +116,7 @@ type Machine struct {
 	pending *pendingFeeding
 	// addInChoices / addInIndex drive the AddInSelect picker (the ranked tags
 	// plus a trailing "Other (name later)" row).
-	addInChoices []oled.AddInChoice
+	addInChoices []display.AddInChoice
 	addInIndex   int
 	// bluePressedAt timestamps Blue's press while in LockedSummary, so the tick
 	// loop can detect a long-press (≥ long_press_ms) and enter SnackMode.
@@ -126,7 +130,7 @@ type Machine struct {
 	// refresh carries a non-blocking signal (from NotifyDogsChanged, called by
 	// the web layer after a dog is created/edited/deleted) telling the run loop
 	// to reload the dog list. Reloading on the run goroutine — rather than from
-	// the caller's — keeps all OLED/LED rendering single-threaded.
+	// the caller's — keeps all display/LED rendering single-threaded.
 	refresh chan struct{}
 }
 
@@ -139,7 +143,7 @@ type pendingFeeding struct {
 }
 
 // New constructs a Machine. Pass at least Cfg, Bus, Store, Buttons, Rotary,
-// OLED, and LEDs. Clk and Log default to real / slog.Default.
+// Display, and LEDs. Clk and Log default to real / slog.Default.
 func New(d Deps) (*Machine, error) {
 	if d.Cfg == nil {
 		return nil, errors.New("state: nil cfg")
@@ -150,7 +154,7 @@ func New(d Deps) (*Machine, error) {
 	if d.Store == nil {
 		return nil, errors.New("state: nil store")
 	}
-	if d.Buttons == nil || d.Rotary == nil || d.OLED == nil || d.LEDs == nil {
+	if d.Buttons == nil || d.Rotary == nil || d.Display == nil || d.LEDs == nil {
 		return nil, errors.New("state: nil hardware driver")
 	}
 	if d.Clk == nil {
@@ -194,7 +198,7 @@ func (m *Machine) SelectedDog() domain.Dog {
 }
 
 // Run blocks until ctx is canceled. It reads from the hardware event channels
-// and drives the OLED, LEDs, store, and bus.
+// and drives the display, LEDs, store, and bus.
 func (m *Machine) Run(ctx context.Context) error {
 	if err := m.bootstrap(ctx); err != nil {
 		return err
@@ -301,7 +305,7 @@ func (m *Machine) NotifyDogsChanged() {
 }
 
 // reloadDogs re-reads the dog list and re-renders. Called only from the run
-// loop (via the refresh channel), keeping OLED/LED I/O single-threaded.
+// loop (via the refresh channel), keeping display/LED I/O single-threaded.
 func (m *Machine) reloadDogs(ctx context.Context) {
 	dogs, err := m.d.Store.ListDogs(ctx)
 	if err != nil {
@@ -539,11 +543,11 @@ func (m *Machine) enterAddInSelect(ctx context.Context) {
 	if err != nil {
 		m.d.Log.Warn("addin tags for dog", "dog", dog.ID, "err", err)
 	}
-	choices := make([]oled.AddInChoice, 0, len(ranked)+1)
+	choices := make([]display.AddInChoice, 0, len(ranked)+1)
 	for _, rt := range ranked {
-		choices = append(choices, oled.AddInChoice{TagID: rt.ID, Label: rt.Name})
+		choices = append(choices, display.AddInChoice{TagID: rt.ID, Label: rt.Name})
 	}
-	choices = append(choices, oled.AddInChoice{Label: "Other (name later)", IsOther: true})
+	choices = append(choices, display.AddInChoice{Label: "Other (name later)", IsOther: true})
 
 	m.mu.Lock()
 	m.mode = ModeAddInSelect
@@ -790,6 +794,9 @@ func (m *Machine) recordFeeding(ctx context.Context, dogID int64, score domain.S
 		Kind:   domain.FeedKind(m.d.Cfg.DefaultFeedKind),
 		Score:  score,
 		Source: source,
+		// Flag the timestamp if the system clock hasn't NTP-synced yet (no RTC):
+		// the time is a guess until a human confirms it on the web.
+		TimeUnverified: m.d.Sync != nil && !m.d.Sync.Synced(),
 	})
 	if err != nil {
 		return err
@@ -861,18 +868,18 @@ func (m *Machine) render(ctx context.Context) {
 	lock := m.lock
 	lastInteract := m.lastInteract
 	pending := m.pending
-	addInChoices := make([]oled.AddInChoice, len(m.addInChoices))
+	addInChoices := make([]display.AddInChoice, len(m.addInChoices))
 	copy(addInChoices, m.addInChoices)
 	addInIndex := m.addInIndex
 	m.mu.RUnlock()
 
-	var scene oled.Scene
+	var scene display.Scene
 	switch mode {
 	case ModeIdle:
 		if len(dogs) == 0 {
-			scene = oled.SplashScene{Message: "ADD A DOG", Now: now}
+			scene = display.SplashScene{Message: "ADD A DOG", Now: now}
 		} else {
-			scene = oled.DogSelectorScene{Dog: dogs[sel], Index: sel, Total: len(dogs), Now: now}
+			scene = display.DogSelectorScene{Dog: dogs[sel], Index: sel, Total: len(dogs), Now: now}
 		}
 	case ModeLockedSummary:
 		// Mark any dog that also received a snack since this lock began (the
@@ -890,9 +897,9 @@ func (m *Machine) render(ctx context.Context) {
 				}
 			}
 		}
-		var entries []oled.SummaryEntry
+		var entries []display.SummaryEntry
 		for _, d := range dogs {
-			entries = append(entries, oled.SummaryEntry{
+			entries = append(entries, display.SummaryEntry{
 				DogName:  d.Name,
 				Score:    mealSession[d.ID],
 				HasSnack: snacked[d.ID],
@@ -902,7 +909,7 @@ func (m *Machine) render(ctx context.Context) {
 		if lock.Until != nil {
 			until = *lock.Until
 		}
-		scene = oled.LockedSummaryScene{Entries: entries, LockedUntil: until, Now: now}
+		scene = display.LockedSummaryScene{Entries: entries, LockedUntil: until, Now: now}
 	case ModeSnackMode:
 		var dog domain.Dog
 		if len(dogs) > 0 {
@@ -917,7 +924,7 @@ func (m *Machine) render(ctx context.Context) {
 		if !idleAt.Before(now) {
 			remaining = idleAt.Sub(now)
 		}
-		scene = oled.SnackModeScene{Dog: dog, Remaining: remaining, AlreadyRecorded: already}
+		scene = display.SnackModeScene{Dog: dog, Remaining: remaining, AlreadyRecorded: already}
 	case ModeAddInSelect:
 		var dog domain.Dog
 		var score domain.Score
@@ -925,10 +932,10 @@ func (m *Machine) render(ctx context.Context) {
 			dog = pending.dog
 			score = pending.score
 		}
-		scene = oled.AddInSelectScene{Dog: dog, Score: score, Choices: addInChoices, Index: addInIndex}
+		scene = display.AddInSelectScene{Dog: dog, Score: score, Choices: addInChoices, Index: addInIndex}
 	}
-	if err := m.d.OLED.Render(scene); err != nil {
-		m.d.Log.Warn("oled render", "err", err)
+	if err := m.d.Display.Render(scene); err != nil {
+		m.d.Log.Warn("display render", "err", err)
 	}
 
 	// LEDs: the locked summary shows each dog's meal quality as a colored

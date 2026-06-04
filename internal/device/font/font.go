@@ -1,4 +1,9 @@
-package oled
+// Package font is the shared 5x7 bitmap font used by every display driver. The
+// blitters are sink-based: DrawText / DrawTextScaled call a set(x,y) callback
+// for each lit pixel rather than writing to a specific framebuffer, so the mono
+// OLED (set = mono.Set) and the color LCD (set = canvas.set with a color) draw
+// from the same glyph bitmaps — no font drift between panels.
+package font
 
 import "strings"
 
@@ -62,6 +67,8 @@ var font5x7 = map[byte][5]byte{
 	'Z': {0x61, 0x51, 0x49, 0x45, 0x43},
 }
 
+// glyph returns the 5-column bitmap for c, folding lowercase to uppercase and
+// substituting a hollow box for anything outside the font's coverage.
 func glyph(c byte) [5]byte {
 	if g, ok := font5x7[c]; ok {
 		return g
@@ -72,18 +79,17 @@ func glyph(c byte) [5]byte {
 	return [5]byte{0x7F, 0x41, 0x41, 0x41, 0x7F} // hollow box for unknown
 }
 
-// drawText draws s into m starting at (x,y), with column gap. Each glyph is
-// 5 cols wide × 7 rows tall, plus a 1-col gap. Returns the x-coord after
-// the last glyph.
-func drawText(m *mono, x, y int, s string) int {
+// DrawText draws s starting at (x,y), calling set(px,py) for each lit pixel.
+// Each glyph is 5 cols wide × 7 rows tall, plus a 1-col gap. Returns the
+// x-coord after the last glyph.
+func DrawText(x, y int, s string, set func(px, py int)) int {
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		g := glyph(c)
+		g := glyph(s[i])
 		for col := 0; col < 5; col++ {
 			b := g[col]
 			for row := 0; row < 7; row++ {
 				if b&(1<<uint(row)) != 0 {
-					m.Set(x+col, y+row, true)
+					set(x+col, y+row)
 				}
 			}
 		}
@@ -92,11 +98,12 @@ func drawText(m *mono, x, y int, s string) int {
 	return x
 }
 
-// drawTextScaled draws text with each glyph pixel replicated `scale` times
-// in both directions. Used for "large" rendering of dog names.
-func drawTextScaled(m *mono, x, y int, s string, scale int) int {
+// DrawTextScaled draws text with each glyph pixel replicated `scale` times in
+// both directions (a scale×scale block per lit pixel). Used for "large"
+// rendering of dog names. scale <= 1 falls back to DrawText.
+func DrawTextScaled(x, y int, s string, scale int, set func(px, py int)) int {
 	if scale <= 1 {
-		return drawText(m, x, y, s)
+		return DrawText(x, y, s, set)
 	}
 	for i := 0; i < len(s); i++ {
 		g := glyph(s[i])
@@ -104,7 +111,13 @@ func drawTextScaled(m *mono, x, y int, s string, scale int) int {
 			b := g[col]
 			for row := 0; row < 7; row++ {
 				if b&(1<<uint(row)) != 0 {
-					m.fillRect(x+col*scale, y+row*scale, x+(col+1)*scale, y+(row+1)*scale, true)
+					bx := x + col*scale
+					by := y + row*scale
+					for dy := 0; dy < scale; dy++ {
+						for dx := 0; dx < scale; dx++ {
+							set(bx+dx, by+dy)
+						}
+					}
 				}
 			}
 		}
@@ -113,13 +126,13 @@ func drawTextScaled(m *mono, x, y int, s string, scale int) int {
 	return x
 }
 
-// textWidth returns the pixel width drawText would consume for s at scale 1.
-func textWidth(s string) int {
+// TextWidth returns the pixel width DrawText would consume for s at scale 1.
+func TextWidth(s string) int {
 	if s == "" {
 		return 0
 	}
 	return len(s)*6 - 1
 }
 
-// upper is a small helper since font5x7 is uppercase-only.
-func upper(s string) string { return strings.ToUpper(s) }
+// Upper is a small helper since font5x7 is uppercase-only.
+func Upper(s string) string { return strings.ToUpper(s) }

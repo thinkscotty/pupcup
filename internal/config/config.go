@@ -22,16 +22,20 @@ type Config struct {
 	Timezone string `yaml:"timezone" env:"TIMEZONE"`
 
 	// Hardware
+	Display       string     `yaml:"display" env:"DISPLAY"` // "gc9a01" (round SPI LCD) | "oled" (SSD1306 I2C)
 	SPIDevice     string     `yaml:"spi_device" env:"SPI_DEVICE"`
 	I2CBus        int        `yaml:"i2c_bus" env:"I2C_BUS"`
 	OLEDAddr      uint16     `yaml:"oled_addr" env:"OLED_ADDR"`
+	LCDSPIDevice  string     `yaml:"lcd_spi_device" env:"LCD_SPI_DEVICE"` // GC9A01 on SPI1
+	LCDDCPin      int        `yaml:"lcd_dc_pin" env:"LCD_DC_PIN"`         // data/command select (BCM)
+	LCDRSTPin     int        `yaml:"lcd_rst_pin" env:"LCD_RST_PIN"`       // reset (BCM)
 	NeopixelCount int        `yaml:"neopixel_count" env:"NEOPIXEL_COUNT"`
 	ButtonPins    ButtonPins `yaml:"button_pins"`
 	RotaryPins    RotaryPins `yaml:"rotary_pins"`
 
 	ButtonDebounceMS int `yaml:"button_debounce_ms" env:"BUTTON_DEBOUNCE_MS"`
 	RotaryDebounceMS int `yaml:"rotary_debounce_ms" env:"ROTARY_DEBOUNCE_MS"`
-	LongPressMS     int `yaml:"long_press_ms" env:"LONG_PRESS_MS"`
+	LongPressMS      int `yaml:"long_press_ms" env:"LONG_PRESS_MS"`
 
 	// Behavior
 	MealLockMinutes          int    `yaml:"meal_lock_minutes" env:"MEAL_LOCK_MINUTES"`
@@ -70,11 +74,15 @@ func Default() Config {
 		PhotoDir: "/var/lib/pupcup/photos",
 		Timezone: "America/New_York",
 
+		Display:       "gc9a01",
 		SPIDevice:     "/dev/spidev0.0",
 		I2CBus:        1,
 		OLEDAddr:      0x3C,
+		LCDSPIDevice:  "/dev/spidev1.0",
+		LCDDCPin:      25,
+		LCDRSTPin:     24,
 		NeopixelCount: 8,
-		ButtonPins:    ButtonPins{Green: 12, Yellow: 16, Red: 21, Blue: 20},
+		ButtonPins:    ButtonPins{Green: 12, Yellow: 16, Red: 5, Blue: 6},
 		RotaryPins:    RotaryPins{CLK: 17, DT: 27, SW: 22},
 
 		ButtonDebounceMS: 25,
@@ -236,6 +244,24 @@ func (c *Config) validate() error {
 		"rotary_pins.dt":     c.RotaryPins.DT,
 		"rotary_pins.sw":     c.RotaryPins.SW,
 	}
+
+	// The active display selects which extra hardware lines must be valid. The
+	// GC9A01 drives two plain GPIO lines (DC, RST) that must be >0 and not
+	// collide with the button/rotary pins, so fold them into the uniqueness
+	// check below. The OLED needs only its I2C bus/addr (validated implicitly).
+	switch c.Display {
+	case "oled":
+		// SSD1306 over I2C; the LCD SPI/GPIO lines are unused.
+	case "gc9a01":
+		if c.LCDSPIDevice == "" {
+			errs = append(errs, "lcd_spi_device is required when display is gc9a01")
+		}
+		pins["lcd_dc_pin"] = c.LCDDCPin
+		pins["lcd_rst_pin"] = c.LCDRSTPin
+	default:
+		errs = append(errs, fmt.Sprintf("display %q must be oled or gc9a01", c.Display))
+	}
+
 	seen := map[int]string{}
 	for name, pin := range pins {
 		if pin <= 0 {

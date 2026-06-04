@@ -1,8 +1,35 @@
 # PupCup
 
-A single Go binary for a Raspberry Pi Zero 2W that drives a physical button device and serves a local-network web app for tracking dog feedings.
+A single Go binary for a Raspberry Pi 3B+ that drives a physical button device and serves a local-network web app for tracking dog feedings.
 
 See [pupcup_build_plan.md](pupcup_build_plan.md) for architecture and [pupcup_hardware_build.md](pupcup_hardware_build.md) for the hardware build.
+
+## Install on a Raspberry Pi (one line)
+
+Once the device is wired up, you can provision a fresh Pi end-to-end over SSH —
+no Go toolchain, no repo checkout. Works on a **Pi 3, 3B+, 4, or Zero 2 W**
+running a 64-bit (or armv7) Raspberry Pi OS.
+
+1. **Flash the OS** with [Raspberry Pi Imager](https://www.raspberrypi.com/software/):
+   Raspberry Pi OS Lite (64-bit), and in *Edit Settings* set the hostname,
+   enable **SSH** (paste your public key), and configure **wifi**.
+2. **SSH in and run the installer**, telling it which display you wired:
+
+   ```sh
+   ssh <user>@<hostname>.local
+   curl -fsSL https://raw.githubusercontent.com/thinkscotty/pupcup/main/install.sh \
+     | sudo bash -s -- --display gc9a01
+   ```
+
+The installer enables I²C/SPI and the RTC, installs the matching prebuilt
+release binary (checksum-verified), creates the `pupcup` service, and reboots.
+When it comes back, the dashboard is at `http://<hostname>.local/`.
+
+Options: `--display gc9a01|oled`, `--timezone <IANA>`, `--hostname <name>`,
+`--version <tag>`, `--no-reboot` (run `sudo bash install.sh --help` for all).
+Prefer to do it by hand, or want the verification/UAT checklist? See
+[docs/initial_pi_flash.md](docs/initial_pi_flash.md). Releases are cut by pushing
+a `v*` tag (see [.github/workflows/release.yml](.github/workflows/release.yml)).
 
 ## Quick start (laptop)
 

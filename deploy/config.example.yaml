@@ -12,11 +12,32 @@ db_path: "/var/lib/pupcup/pupcup.sqlite"   # SQLite file (WAL); StateDirectory i
 photo_dir: "/var/lib/pupcup/photos"        # uploaded dog photos
 timezone: "America/New_York"               # IANA tz; drives the household-local day
 
+# --- Display -----------------------------------------------------------------
+# Which panel this build drives. "gc9a01" = 240x240 round RGB SPI LCD (the
+# reference build, default). "oled" = 128x64 mono SSD1306 over I2C — cheaper
+# and easier to source; set this if you built the OLED variant. It uses
+# i2c_bus/oled_addr below and ignores the lcd_* fields.
+display: "gc9a01"
+
 # --- Hardware (BCM/GPIO numbers; see pupcup_hardware_build.md §3) -------------
-spi_device: "/dev/spidev0.0"               # SK6812 NeoPixel, via 74AHCT125 level shifter
-i2c_bus: 1                                 # OLED + DS1307 share bus 1
-oled_addr: 0x3C                            # SSD1306 128x64
+# Buttons: GREEN=BCM12, YELLOW=BCM16, RED=BCM5, BLUE=BCM6 (RED/BLUE moved off
+# 20/21, which SPI1 now claims); rotary CLK=17 DT=27 SW=22. These come from the
+# binary's built-in defaults (see the note below).
+spi_device: "/dev/spidev0.0"               # SK6812 NeoPixel on SPI0, via 74AHCT125 level shifter
 neopixel_count: 8                          # SK6812 stick length
+
+# GC9A01 round LCD on the auxiliary SPI1 bus (used when display: gc9a01). Pi
+# prereq in /boot/firmware/config.txt: dtoverlay=spi1-1cs, core_freq=400,
+# core_freq_min=400 — creates /dev/spidev1.0 and pins the aux-SPI clock. CS
+# (BCM18) is asserted by the kernel SPI driver; only DC and RST are app-driven.
+lcd_spi_device: "/dev/spidev1.0"
+lcd_dc_pin: 25                             # data/command select (BCM)
+lcd_rst_pin: 24                            # reset (BCM)
+
+# SSD1306 OLED on I2C (used when display: oled). The DS1307 RTC shares bus 1
+# but is owned by the kernel rtc-ds1307 driver, not this app.
+i2c_bus: 1
+oled_addr: 0x3C                            # SSD1306 128x64
 
 # button_pins / rotary_pins are fixed, soldered BCM assignments — they come
 # from the binary's built-in defaults (internal/config Default(), the source

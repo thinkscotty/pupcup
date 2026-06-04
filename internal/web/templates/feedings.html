@@ -87,6 +87,7 @@
       {{if eq .Kind "nonstandard"}}<span class="badge badge-idle">Non-standard</span>{{end}}
       {{end}}
       <span class="muted entry-when">{{fmtTime .TS}}</span>
+      {{if .Unverified}}<span class="badge badge-unverified" title="Recorded by the device before its clock synced — check the time and edit if it's off">time unverified</span>{{end}}
       {{if .Edited}}<span class="muted entry-edited" title="Edited after it was recorded">&middot; edited</span>{{end}}
     </div>
     {{if .Specifics}}<p class="entry-specifics muted">{{.Specifics}}</p>{{end}}

@@ -55,7 +55,10 @@ type entryView struct {
 	Kind      domain.FeedKind // meals only
 	Specifics string
 	Edited    bool
-	Source    domain.Source
+	// Unverified: a meal the device recorded before its clock synced; the row
+	// shows a badge prompting the household to confirm the time (meals only).
+	Unverified bool
+	Source     domain.Source
 	// TagArea carries the add-in chips + add control for meal rows; nil for
 	// snacks (which can't be tagged).
 	TagArea *feedingTags
@@ -119,7 +122,7 @@ func (s *Server) recentEntries(ctx context.Context) ([]entryView, error) {
 		out = append(out, entryView{
 			ID: f.ID, DogID: f.DogID, DogName: d.Name, Accent: d.AccentColor,
 			TS: f.TS, Score: f.Score, Kind: f.Kind, Specifics: f.Specifics,
-			Edited: f.EditedAt != nil, Source: f.Source, TagArea: &ta,
+			Edited: f.EditedAt != nil, Unverified: f.TimeUnverified, Source: f.Source, TagArea: &ta,
 		})
 	}
 	for _, sn := range snacks {
@@ -446,7 +449,7 @@ func (s *Server) feedingEntry(ctx context.Context, f domain.Feeding) entryView {
 	return entryView{
 		ID: f.ID, DogID: f.DogID, DogName: d.Name, Accent: d.AccentColor,
 		TS: f.TS, Score: f.Score, Kind: f.Kind, Specifics: f.Specifics,
-		Edited: f.EditedAt != nil, Source: f.Source, TagArea: &ta,
+		Edited: f.EditedAt != nil, Unverified: f.TimeUnverified, Source: f.Source, TagArea: &ta,
 	}
 }
 

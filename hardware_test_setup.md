@@ -1,6 +1,6 @@
 # PupCup — Hardware Test Setup
 
-End-to-end instructions for going from a **freshly-flashed Raspberry Pi Zero 2W** to **running all four hardware probes**. Use this any time you re-flash the SD card or set up a new device.
+End-to-end instructions for going from a **freshly-flashed Raspberry Pi 3B+** to **running all four hardware probes**. Use this any time you re-flash the SD card or set up a new device.
 
 This document focuses on the *test setup* only. For wiring, BOM, and acceptance criteria see [pupcup_hardware_build.md](pupcup_hardware_build.md). For the overall architecture see [pupcup_build_plan.md](pupcup_build_plan.md).
 
@@ -35,7 +35,7 @@ Probes available today (all under [cmd/hwprobe/](cmd/hwprobe/)):
 - **Raspberry Pi Imager** — https://www.raspberrypi.com/software/
 
 ### On the Pi
-- **Raspberry Pi Zero 2W** with the perfboard build wired up per [pupcup_hardware_build.md §4](pupcup_hardware_build.md).
+- **Raspberry Pi 3B+** with the perfboard build wired up per [pupcup_hardware_build.md §4](pupcup_hardware_build.md).
 - microSD card, ≥ 16 GB, A1/A2 rated.
 - USB-C PD trigger module set to **5V / 3A**.
 - Network: same wifi SSID as your dev machine (mDNS resolution needs L2 connectivity).
@@ -136,7 +136,7 @@ If `i2cdetect` shows neither address, **stop here** — you have a wiring proble
 
 ## 3. Build the probes (on your dev machine)
 
-The Pi Zero 2W is **64-bit ARM** (Cortex-A53), so cross-compile to `linux/arm64`. Run from the repo root:
+The Pi 3B+ is **64-bit ARM** (Cortex-A53), so cross-compile to `linux/arm64`. Run from the repo root:
 
 ```sh
 cd /Users/scotty/code/webapp_projects/pupcup

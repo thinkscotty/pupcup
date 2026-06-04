@@ -3,6 +3,8 @@ package oled
 import (
 	"fmt"
 	"time"
+
+	"github.com/scottyturner/pupcup/internal/device/display"
 )
 
 // drawCenteredText centers a string horizontally at the panel's vertical mid.
@@ -19,7 +21,7 @@ func drawCenteredText(m *mono, msg string) {
 
 // drawDogSelector draws a centered, scale-2 dog name with an Index/Total
 // indicator on the bottom-right.
-func drawDogSelector(m *mono, sc DogSelectorScene) {
+func drawDogSelector(m *mono, sc display.DogSelectorScene) {
 	name := upper(sc.Dog.Name)
 	scale := 2
 	w := textWidth(name) * scale
@@ -47,7 +49,7 @@ func drawDogSelector(m *mono, sc DogSelectorScene) {
 
 // drawSummary draws the locked-summary scene: each dog's name + score,
 // with a countdown to lock expiry on the bottom row.
-func drawSummary(m *mono, sc LockedSummaryScene) {
+func drawSummary(m *mono, sc display.LockedSummaryScene) {
 	drawText(m, 2, 2, "FED")
 	hdr := "TODAY"
 	drawText(m, Width-textWidth(hdr)-2, 2, hdr)
@@ -93,7 +95,7 @@ func drawSummary(m *mono, sc LockedSummaryScene) {
 }
 
 // drawSnack draws snack-mode UI: highlighted dog name, snack label, idle countdown.
-func drawSnack(m *mono, sc SnackModeScene) {
+func drawSnack(m *mono, sc display.SnackModeScene) {
 	hdr := "SNACK"
 	drawText(m, (Width-textWidth(hdr))/2, 4, hdr)
 
@@ -117,7 +119,7 @@ func drawSnack(m *mono, sc SnackModeScene) {
 // meal score it will commit with, then a scrolling list of choices with the
 // highlighted row marked by a caret and an outline box. The font draws "on"
 // pixels only, so the selection is shown with a frame rather than inversion.
-func drawAddInSelect(m *mono, sc AddInSelectScene) {
+func drawAddInSelect(m *mono, sc display.AddInSelectScene) {
 	// Header: dog name (left) + score letter badge (right).
 	drawText(m, 2, 2, upper(sc.Dog.Name))
 	badge := "-"

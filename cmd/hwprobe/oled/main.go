@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/scottyturner/pupcup/internal/config"
+	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/hostinit"
 	"github.com/scottyturner/pupcup/internal/device/oled"
 	"github.com/scottyturner/pupcup/internal/domain"
@@ -37,11 +38,11 @@ func main() {
 	defer r.Close()
 
 	now := time.Now()
-	scenes := []oled.Scene{
-		oled.SplashScene{Message: "PUPCUP", Now: now},
-		oled.DogSelectorScene{Dog: domain.Dog{Name: "Cleo"}, Index: 0, Total: 3, Now: now},
-		oled.LockedSummaryScene{
-			Entries: []oled.SummaryEntry{
+	scenes := []display.Scene{
+		display.SplashScene{Message: "PUPCUP", Now: now},
+		display.DogSelectorScene{Dog: domain.Dog{Name: "Cleo"}, Index: 0, Total: 3, Now: now},
+		display.LockedSummaryScene{
+			Entries: []display.SummaryEntry{
 				{DogName: "Cleo", Score: domain.ScoreFull},
 				{DogName: "Rio", Score: domain.ScorePartial, HasSnack: true},
 				{DogName: "Pip", Score: domain.ScoreNone},
@@ -49,7 +50,7 @@ func main() {
 			LockedUntil: now.Add(3*time.Hour + 42*time.Minute),
 			Now:         now,
 		},
-		oled.SnackModeScene{Dog: domain.Dog{Name: "Otis"}, Remaining: 45 * time.Second},
+		display.SnackModeScene{Dog: domain.Dog{Name: "Otis"}, Remaining: 45 * time.Second},
 	}
 	for _, s := range scenes {
 		fmt.Printf("rendering %T\n", s)

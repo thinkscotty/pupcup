@@ -18,6 +18,8 @@ import (
 	"github.com/scottyturner/pupcup/internal/clock"
 	"github.com/scottyturner/pupcup/internal/config"
 	"github.com/scottyturner/pupcup/internal/device/buttons"
+	"github.com/scottyturner/pupcup/internal/device/display"
+	"github.com/scottyturner/pupcup/internal/device/gc9a01"
 	"github.com/scottyturner/pupcup/internal/device/hostinit"
 	"github.com/scottyturner/pupcup/internal/device/neopixel"
 	"github.com/scottyturner/pupcup/internal/device/oled"
@@ -113,11 +115,26 @@ func run() error {
 	}
 	defer rot.Close()
 
-	ol, err := oled.New(oled.Config{I2CBus: uint8(cfg.I2CBus), Addr: cfg.OLEDAddr}, log)
-	if err != nil {
-		return fmt.Errorf("oled: %w", err)
+	// Display: one binary supports two panels (build-time both compile; runtime
+	// picks one). config.validate guarantees cfg.Display is "gc9a01" or "oled",
+	// so the default case is purely defensive.
+	var disp display.Renderer
+	switch cfg.Display {
+	case "gc9a01":
+		disp, err = gc9a01.New(gc9a01.Config{
+			Device: cfg.LCDSPIDevice,
+			DCPin:  cfg.LCDDCPin,
+			RSTPin: cfg.LCDRSTPin,
+		}, log)
+	case "oled":
+		disp, err = oled.New(oled.Config{I2CBus: uint8(cfg.I2CBus), Addr: cfg.OLEDAddr}, log)
+	default:
+		return fmt.Errorf("unknown display %q", cfg.Display)
 	}
-	defer ol.Close()
+	if err != nil {
+		return fmt.Errorf("display (%s): %w", cfg.Display, err)
+	}
+	defer disp.Close()
 
 	leds, err := neopixel.New(neopixel.Config{Device: cfg.SPIDevice, N: cfg.NeopixelCount}, log)
 	if err != nil {
@@ -128,7 +145,7 @@ func run() error {
 	// Boot splash (milestone 2): a brief "PupCup" before the state machine's
 	// bootstrap renders the live scene. Interruptible so a signal during the
 	// splash still shuts down promptly (drivers close via the defers above).
-	_ = ol.Render(oled.SplashScene{Message: "PupCup", Now: clk.Now()})
+	_ = disp.Render(display.SplashScene{Message: "PupCup", Now: clk.Now()})
 	select {
 	case <-time.After(splashDuration):
 	case <-ctx.Done():
@@ -139,11 +156,12 @@ func run() error {
 		Cfg:     &cfg,
 		Log:     log,
 		Clk:     clk,
+		Sync:    clock.SystemSync{},
 		Bus:     bus,
 		Store:   st,
 		Buttons: btn,
 		Rotary:  rot,
-		OLED:    ol,
+		Display: disp,
 		LEDs:    leds,
 	})
 	if err != nil {

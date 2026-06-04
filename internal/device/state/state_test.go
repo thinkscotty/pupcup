@@ -9,8 +9,8 @@ import (
 	"github.com/scottyturner/pupcup/internal/clock"
 	"github.com/scottyturner/pupcup/internal/config"
 	"github.com/scottyturner/pupcup/internal/device/buttons"
+	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/neopixel"
-	"github.com/scottyturner/pupcup/internal/device/oled"
 	"github.com/scottyturner/pupcup/internal/device/rotary"
 	"github.com/scottyturner/pupcup/internal/domain"
 	"github.com/scottyturner/pupcup/internal/eventbus"
@@ -24,7 +24,7 @@ type harness struct {
 	bus   *eventbus.Bus
 	btn   *buttons.Fake
 	rot   *rotary.Fake
-	oled  *oled.Fake
+	oled  *display.Fake
 	leds  *neopixel.Fake
 	ctx   context.Context
 }
@@ -68,7 +68,7 @@ func newHarness(t *testing.T, dogNames ...string) *harness {
 		bus:   bus,
 		btn:   buttons.NewFake(),
 		rot:   rotary.NewFake(),
-		oled:  oled.NewFake(),
+		oled:  display.NewFake(),
 		leds:  neopixel.NewFake(8),
 		ctx:   ctx,
 	}
@@ -87,7 +87,7 @@ func newHarness(t *testing.T, dogNames ...string) *harness {
 		Store:   st,
 		Buttons: h.btn,
 		Rotary:  h.rot,
-		OLED:    h.oled,
+		Display: h.oled,
 		LEDs:    h.leds,
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestBoot_Idle_ShowsSelector(t *testing.T) {
 	if h.m.Mode() != ModeIdle {
 		t.Fatalf("mode = %s", h.m.Mode())
 	}
-	last, ok := h.oled.Last().(oled.DogSelectorScene)
+	last, ok := h.oled.Last().(display.DogSelectorScene)
 	if !ok {
 		t.Fatalf("scene = %T", h.oled.Last())
 	}
@@ -211,7 +211,7 @@ func TestMealButtons_RecordAndAdvance(t *testing.T) {
 		}
 	}
 	// OLED summary scene.
-	if _, ok := h.oled.Last().(oled.LockedSummaryScene); !ok {
+	if _, ok := h.oled.Last().(display.LockedSummaryScene); !ok {
 		t.Fatalf("scene = %T", h.oled.Last())
 	}
 	// Lock persisted.
@@ -393,7 +393,7 @@ func newHarnessExisting(t *testing.T, prev *harness) *harness {
 		bus:   bus,
 		btn:   buttons.NewFake(),
 		rot:   rotary.NewFake(),
-		oled:  oled.NewFake(),
+		oled:  display.NewFake(),
 		leds:  neopixel.NewFake(8),
 		ctx:   prev.ctx,
 	}
@@ -405,7 +405,7 @@ func newHarnessExisting(t *testing.T, prev *harness) *harness {
 	})
 	m, err := New(Deps{
 		Cfg: &cfg, Log: slog.Default(), Clk: prev.clk, Bus: bus, Store: prev.store,
-		Buttons: h.btn, Rotary: h.rot, OLED: h.oled, LEDs: h.leds,
+		Buttons: h.btn, Rotary: h.rot, Display: h.oled, LEDs: h.leds,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -539,32 +539,32 @@ func TestSummaryFrame(t *testing.T) {
 		want   []neopixel.Color
 	}{
 		{
-			name: "one dog fills the bar",
+			name:   "one dog fills the bar",
 			pixels: 8, scores: []neopixel.Color{g},
 			want: []neopixel.Color{g, g, g, g, g, g, g, g},
 		},
 		{
-			name: "two dogs split 4/4, no gap",
+			name:   "two dogs split 4/4, no gap",
 			pixels: 8, scores: []neopixel.Color{g, r},
 			want: []neopixel.Color{g, g, g, g, r, r, r, r},
 		},
 		{
-			name: "three dogs: 2-gap-2-gap-2",
+			name:   "three dogs: 2-gap-2-gap-2",
 			pixels: 8, scores: []neopixel.Color{g, y, r},
 			want: []neopixel.Color{g, g, off, y, y, off, r, r},
 		},
 		{
-			name: "four dogs has no layout -> nil (caller falls back)",
+			name:   "four dogs has no layout -> nil (caller falls back)",
 			pixels: 8, scores: []neopixel.Color{g, g, g, g},
 			want: nil,
 		},
 		{
-			name: "non-8-pixel bar -> nil",
+			name:   "non-8-pixel bar -> nil",
 			pixels: 12, scores: []neopixel.Color{g, y, r},
 			want: nil,
 		},
 		{
-			name: "zero dogs -> nil",
+			name:   "zero dogs -> nil",
 			pixels: 8, scores: nil,
 			want: nil,
 		},

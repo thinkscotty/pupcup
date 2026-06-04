@@ -10,6 +10,8 @@ import (
 
 	"periph.io/x/conn/v3/i2c/i2creg"
 	"periph.io/x/devices/v3/ssd1306"
+
+	"github.com/scottyturner/pupcup/internal/device/display"
 )
 
 // Config holds the SSD1306 wiring options.
@@ -18,9 +20,10 @@ type Config struct {
 	Addr   uint16 // typically 0x3C
 }
 
-// New opens the I2C bus, initializes the SSD1306, and returns a Renderer.
-// The host package must be initialized (host.Init) before calling.
-func New(cfg Config, log *slog.Logger) (Renderer, error) {
+// New opens the I2C bus, initializes the SSD1306, and returns a
+// display.Renderer. The host package must be initialized (host.Init) before
+// calling.
+func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -58,7 +61,7 @@ type linuxRenderer struct {
 	log *slog.Logger
 }
 
-func (r *linuxRenderer) Render(s Scene) error {
+func (r *linuxRenderer) Render(s display.Scene) error {
 	img := frame(s)
 	r.mu.Lock()
 	defer r.mu.Unlock()

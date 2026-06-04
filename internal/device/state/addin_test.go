@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottyturner/pupcup/internal/device/oled"
+	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/rotary"
 	"github.com/scottyturner/pupcup/internal/domain"
 	"github.com/scottyturner/pupcup/internal/store"
@@ -62,7 +62,7 @@ func TestForwardChord_HoldMealTapBlue_OpensPicker(t *testing.T) {
 	if h.m.Mode() != ModeAddInSelect {
 		t.Fatalf("forward chord should open the picker, mode = %s", h.m.Mode())
 	}
-	sc, ok := h.oled.Last().(oled.AddInSelectScene)
+	sc, ok := h.oled.Last().(display.AddInSelectScene)
 	if !ok {
 		t.Fatalf("scene = %T, want AddInSelectScene", h.oled.Last())
 	}
@@ -89,7 +89,7 @@ func TestReverseChord_HoldBlueTapMeal_OpensPicker(t *testing.T) {
 	if h.m.Mode() != ModeAddInSelect {
 		t.Fatalf("reverse chord should open the picker, mode = %s", h.m.Mode())
 	}
-	sc := h.oled.Last().(oled.AddInSelectScene)
+	sc := h.oled.Last().(display.AddInSelectScene)
 	if sc.Score != domain.ScorePartial {
 		t.Fatalf("picker score = %s, want partial", sc.Score)
 	}
@@ -107,7 +107,7 @@ func TestAddIn_OtherAttachesUnspecified(t *testing.T) {
 	h.pressBtn(t, domain.BtnBlue) // chord
 	// The trailing "Other (name later)" row is last; one CCW from index 0 wraps to it.
 	h.fireRot(t, rotary.RotateCCW)
-	sc := h.oled.Last().(oled.AddInSelectScene)
+	sc := h.oled.Last().(display.AddInSelectScene)
 	if !sc.Choices[sc.Index].IsOther {
 		t.Fatalf("CCW from top should land on the Other row, got %+v", sc.Choices[sc.Index])
 	}

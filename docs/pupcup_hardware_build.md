@@ -1,12 +1,12 @@
 # PupCup — Hardware Build Plan
 
-A complete, follow-along build for the PupCup appliance: a single-board, headless Raspberry Pi Zero 2W that simultaneously serves the PupCup web application **and** acts as the tactile button device with OLED, rotary encoder, and an 8-pixel front-edge status bar. This document covers parts, tools, wiring, perfboard layout, OS provisioning, and bring-up tests. Once verified, the assembly drops into a 3D-printed enclosure (designed separately).
+A complete, follow-along build for the PupCup appliance: a single-board, headless Raspberry Pi 3B+ that simultaneously serves the PupCup web application **and** acts as the tactile button device with OLED, rotary encoder, and an 8-pixel front-edge status bar. This document covers parts, tools, wiring, perfboard layout, OS provisioning, and bring-up tests. Once verified, the assembly drops into a 3D-printed enclosure (designed separately).
 
 ## 1. Overview
 
 | Aspect | Spec |
 |---|---|
-| Compute | Raspberry Pi Zero 2W |
+| Compute | Raspberry Pi 3B+ |
 | OS | Raspberry Pi OS Lite 64-bit, Debian 13 ("Trixie") |
 | Inputs | 4 colored momentary buttons (Green / Yellow / Red / Blue), 1 KY-040 rotary encoder |
 | Outputs | 0.96" SSD1306 OLED 128×64 (I²C), 8× SK6812 NeoPixel stick (SPI) |
@@ -24,7 +24,7 @@ Quantities listed are the build quantity (1 device). Suggested suppliers in pare
 ### 2.1 Core electronics
 | # | Part | Qty | Notes |
 |---|---|---|---|
-| 1 | Raspberry Pi Zero 2W (with soldered 40-pin header) | 1 | Pre-soldered header strongly preferred. Cortex-A53 quad-core, 512 MB RAM. |
+| 1 | Raspberry Pi 3B+ (40-pin header pre-installed) | 1 | The 3B+ ships with the GPIO header. Cortex-A53 quad-core @ 1.4 GHz, 1 GB RAM. |
 | 2 | microSD card, ≥ 16 GB, A1 / A2 rated | 1 | SanDisk Industrial or Samsung EVO Plus recommended for write endurance. |
 | 3 | 0.96" SSD1306 OLED, I²C, 128×64, monochrome | 1 | 4-pin module (Vcc/GND/SCL/SDA). Default I²C address `0x3C`. |
 | 4 | KY-040 rotary encoder module | 1 | 5-pin (CLK / DT / SW / + / GND). On-board 10kΩ pull-ups on CLK/DT/SW. |
@@ -60,7 +60,7 @@ Quantities listed are the build quantity (1 device). Suggested suppliers in pare
 - A laptop/desktop to flash the SD card and SSH in (running rpi-imager).
 
 ### 2.3 Approximate cost
-Roughly $55–$80 for the full BOM at 2026 pricing, dominated by the Pi Zero 2W and the NeoPixel stick. The 74AHCT125 and DS1307 are well under $2 each. Buy spares of buttons, the 74AHCT125, and the OLED — they are the most likely "oops" parts.
+Roughly $70–$95 for the full BOM at 2026 pricing, dominated by the Pi 3B+ and the NeoPixel stick. The 74AHCT125 and DS1307 are well under $2 each. Buy spares of buttons, the 74AHCT125, and the OLED — they are the most likely "oops" parts.
 
 ## 3. Pinout reference
 

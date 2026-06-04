@@ -1,6 +1,6 @@
 # PupCup — Software Build Plan
 
-The end-to-end software design for PupCup: a single pure-Go binary that runs on a Raspberry Pi Zero 2W and simultaneously (a) drives the physical button device — buttons, rotary encoder, OLED, and NeoPixel status bar — and (b) serves a friendly local-network web app for richer logging, editing, and analytics. This plan covers architecture, package layout, data model, hardware drivers, web layer, deployment, and verification.
+The end-to-end software design for PupCup: a single pure-Go binary that runs on a Raspberry Pi 3B+ and simultaneously (a) drives the physical button device — buttons, rotary encoder, OLED, and NeoPixel status bar — and (b) serves a friendly local-network web app for richer logging, editing, and analytics. This plan covers architecture, package layout, data model, hardware drivers, web layer, deployment, and verification.
 
 > Hardware build is documented separately in [pupcup_hardware_build.md](pupcup_hardware_build.md). This plan assumes that build is complete and the Pi is provisioned per its instructions.
 

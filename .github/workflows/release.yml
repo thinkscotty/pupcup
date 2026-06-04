@@ -1,0 +1,56 @@
+name: release
+
+# Cut a release by pushing a version tag:
+#
+#     git tag v1.0.0 && git push origin v1.0.0
+#
+# This cross-compiles the pure-Go daemon for every Raspberry Pi target, writes a
+# SHA256SUMS manifest, and publishes them as downloadable release assets. The
+# on-Pi installer (install.sh) fetches these and verifies the checksum.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed for `gh release create`
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # keep the build Go in lockstep with the module
+
+      - name: Cross-compile release binaries
+        env:
+          VERSION: ${{ github.ref_name }}   # the tag, e.g. v1.0.0
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+
+          # arm64 — Pi 3 / 3B+ / 4 / Zero 2 W on a 64-bit OS (the reference build).
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "$LDFLAGS" \
+            -o dist/pupcup-linux-arm64 ./cmd/pupcup
+
+          # armv7 — same boards on a 32-bit OS. Pure Go, so it's a free extra target.
+          GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "$LDFLAGS" \
+            -o dist/pupcup-linux-armv7 ./cmd/pupcup
+
+          cd dist && sha256sum pupcup-* > SHA256SUMS
+          echo "Built:"; ls -l
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
