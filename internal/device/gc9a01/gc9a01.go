@@ -25,9 +25,10 @@ const (
 // the two plain GPIO lines the driver toggles directly (DC and RST). CS is
 // the kernel-asserted SPI chip-select and is not listed here.
 type Config struct {
-	Device string // e.g. /dev/spidev1.0
-	DCPin  int    // data/command select (BCM)
-	RSTPin int    // reset (BCM)
+	Device  string // e.g. /dev/spidev1.0
+	DCPin   int    // data/command select (BCM)
+	RSTPin  int    // reset (BCM)
+	SpeedHz int    // SPI clock in Hz; 0 uses the driver default (40 MHz)
 }
 
 // New returns a display.Renderer (see *_linux.go / *_stub.go), so the daemon
@@ -40,6 +41,12 @@ type Prober interface {
 	// DrawTestPattern paints colored quadrants + a center crosshair to verify
 	// addressing, orientation, and color order.
 	DrawTestPattern() error
+	// FlushRect streams the sub-rectangle [x0,x1) x [y0,y1) of buf — a
+	// full-frame Width*Height*2 RGB565 framebuffer (row stride = Width) — to the
+	// panel via a partial address window. FlushRect(buf, 0, 0, Width, Height) is
+	// a full-frame blit. This is the dirty-rectangle path the animation engine
+	// and the lcdperf probe drive.
+	FlushRect(buf []byte, x0, y0, x1, y1 int) error
 }
 
 // ErrUnavailable is returned by hardware constructors on platforms without SPI.
@@ -73,6 +80,7 @@ type Fake struct {
 	lastScene display.Scene
 	fills     int
 	patterns  int
+	rects     int
 	renders   int
 	closed    bool
 }
@@ -117,6 +125,18 @@ func (f *Fake) DrawTestPattern() error {
 	return nil
 }
 
+// FlushRect records a partial-window flush (gc9a01.Prober). The Fake keeps no
+// pixels; tests assert call counts via Rects().
+func (f *Fake) FlushRect(buf []byte, x0, y0, x1, y1 int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return errors.New("gc9a01: closed")
+	}
+	f.rects++
+	return nil
+}
+
 func (f *Fake) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -129,4 +149,11 @@ func (f *Fake) LastFill() (r, g, b uint8) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastFill[0], f.lastFill[1], f.lastFill[2]
+}
+
+// Rects returns the number of FlushRect calls.
+func (f *Fake) Rects() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rects
 }

@@ -24,11 +24,13 @@ var (
 	_ Prober           = (*linuxDev)(nil)
 )
 
-// spiHz is the SPI clock requested for the panel. The GC9A01 tolerates much
-// higher, but on the Pi's auxiliary SPI1 the real clock is governed by
-// core_freq (pinned to 400 MHz in config.txt) and the request is advisory.
-// Start conservative; drop to 24 MHz if the panel tears or shows garbage.
-const spiHz = 32 * physic.MegaHertz
+// defaultSpiHz is the SPI clock requested when Config.SpeedHz is 0. On the Pi's
+// auxiliary SPI1 the real clock is core_freq/divisor (core_freq is pinned to
+// 400 MHz in config.txt), so the request is advisory and snaps to an even
+// divisor — 40 MHz ≈ 400/10. Drop to 25 MHz (400/16) if the panel tears or
+// shows garbage. Override per-call via Config.SpeedHz (the lcdperf probe does
+// this to compare clocks).
+const defaultSpiHz = 40 * physic.MegaHertz
 
 // New opens the SPI port (Mode0, 8-bit), acquires the DC + RST GPIO lines,
 // pulses a hardware reset, and runs the GC9A01 init sequence. The host
@@ -52,7 +54,11 @@ func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gc9a01: open spi %s: %w", cfg.Device, err)
 	}
-	conn, err := port.Connect(spiHz, spi.Mode0, 8)
+	hz := defaultSpiHz
+	if cfg.SpeedHz > 0 {
+		hz = physic.Frequency(cfg.SpeedHz) * physic.Hertz
+	}
+	conn, err := port.Connect(hz, spi.Mode0, 8)
 	if err != nil {
 		_ = port.Close()
 		return nil, fmt.Errorf("gc9a01: connect: %w", err)
@@ -250,11 +256,27 @@ func (d *linuxDev) setWindow(x0, y0, x1, y1 int) error {
 	return d.cmd(0x2C) // RAMWR
 }
 
-// flush streams the framebuffer to GRAM after a full-screen window + RAMWR.
-// The kernel spidev limits a single Tx to maxTx bytes, so the stream is
-// chunked; CS toggles between chunks but the GC9A01 GRAM write pointer
-// auto-increments across them, so the image stays contiguous. Callers hold
-// d.mu (flush does not lock).
+// txChunked streams buf over SPI in maxTx-sized pieces. The kernel spidev
+// driver rejects a single Tx larger than its bufsiz, and CS toggles between
+// chunks, but the GC9A01 GRAM write pointer auto-increments across the toggle
+// (and wraps at the active window's right edge to the next row), so pixels stay
+// in order within the current address window. The caller must have programmed
+// the window + RAMWR and driven DC high.
+func (d *linuxDev) txChunked(buf []byte) error {
+	for off := 0; off < len(buf); off += d.maxTx {
+		end := off + d.maxTx
+		if end > len(buf) {
+			end = len(buf)
+		}
+		if err := d.conn.Tx(buf[off:end], nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flush streams the whole framebuffer to GRAM after a full-screen window +
+// RAMWR. Callers hold d.mu (flush does not lock).
 func (d *linuxDev) flush() error {
 	if err := d.setWindow(0, 0, Width-1, Height-1); err != nil {
 		return err
@@ -262,16 +284,58 @@ func (d *linuxDev) flush() error {
 	if err := d.dc.Out(gpio.High); err != nil {
 		return err
 	}
-	for off := 0; off < len(d.fb); off += d.maxTx {
-		end := off + d.maxTx
-		if end > len(d.fb) {
-			end = len(d.fb)
-		}
-		if err := d.conn.Tx(d.fb[off:end], nil); err != nil {
+	return d.txChunked(d.fb)
+}
+
+// flushRect streams the sub-rectangle [x0,x1) x [y0,y1) of buf (a full-frame
+// Width*Height*2 RGB565 buffer, row stride = Width) to GRAM via a partial
+// address window. When the rect spans the full width its rows are contiguous in
+// buf and stream in one pass; otherwise each row streams separately and the
+// controller's auto-wrap at the window edge keeps them in order. Coordinates are
+// half-open and clamped to the panel; an empty rect is a no-op. Callers hold
+// d.mu (flushRect does not lock).
+func (d *linuxDev) flushRect(buf []byte, x0, y0, x1, y1 int) error {
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > Width {
+		x1 = Width
+	}
+	if y1 > Height {
+		y1 = Height
+	}
+	if x0 >= x1 || y0 >= y1 {
+		return nil
+	}
+	if err := d.setWindow(x0, y0, x1-1, y1-1); err != nil {
+		return err
+	}
+	if err := d.dc.Out(gpio.High); err != nil {
+		return err
+	}
+	if x0 == 0 && x1 == Width {
+		return d.txChunked(buf[y0*Width*2 : y1*Width*2])
+	}
+	for y := y0; y < y1; y++ {
+		if err := d.txChunked(buf[(y*Width+x0)*2 : (y*Width+x1)*2]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// FlushRect locks the panel and streams the sub-rectangle [x0,x1) x [y0,y1) of
+// buf (a full-frame RGB565 framebuffer). FlushRect(buf, 0, 0, Width, Height) is
+// a full-frame blit. It is the dirty-rectangle path the animation engine drives
+// from its dedicated flush goroutine; nothing else may touch the panel
+// concurrently while it runs.
+func (d *linuxDev) FlushRect(buf []byte, x0, y0, x1, y1 int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.flushRect(buf, x0, y0, x1, y1)
 }
 
 // setPx writes one RGB565 pixel into the framebuffer (bounds-checked).
