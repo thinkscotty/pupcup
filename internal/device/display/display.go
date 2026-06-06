@@ -91,6 +91,38 @@ type Renderer interface {
 	Close() error
 }
 
+// RectFlusher is an optional capability a Renderer may also implement to accept
+// dirty-rectangle blits from the animation engine. FlushRect streams the
+// half-open sub-rectangle [x0,x1) x [y0,y1) of buf — a full-frame RGB565
+// framebuffer (row stride = panel width * 2) — to the panel via a partial
+// address window; FlushRect(buf, 0, 0, w, h) is a full-frame blit. The engine
+// type-asserts for it, so this stays additive: renderers that don't implement it
+// (the OLED) keep using Render alone, and Renderer itself is unchanged.
+type RectFlusher interface {
+	FlushRect(buf []byte, x0, y0, x1, y1 int) error
+}
+
+// CelebrationKind distinguishes the one-shot reactions the animator can play
+// when a feeding is recorded.
+type CelebrationKind uint8
+
+const (
+	// CelebrateMeal marks a recorded meal; the event's Score carries the outcome.
+	CelebrateMeal CelebrationKind = iota
+	// CelebrateSnack marks a recorded snack.
+	CelebrateSnack
+)
+
+// CelebrationEvent is a one-shot animation trigger, kept separate from the
+// steady Scene snapshot so the animator can stagger and time it independently of
+// state rendering. The state machine fires one after committing a feeding;
+// renderers that animate (the GC9A01) react to it, others ignore it.
+type CelebrationEvent struct {
+	DogID int64
+	Kind  CelebrationKind
+	Score domain.Score
+}
+
 // ErrUnavailable is returned by hardware constructors on platforms without the
 // underlying bus (I2C/SPI).
 var ErrUnavailable = errors.New("display: hardware unavailable on this platform")
@@ -102,9 +134,11 @@ func NewFake() *Fake {
 }
 
 type Fake struct {
-	mu    sync.Mutex
-	last  Scene
-	count int
+	mu       sync.Mutex
+	last     Scene
+	count    int
+	lastRect [4]int
+	rects    int
 }
 
 func (f *Fake) Render(s Scene) error {
@@ -130,3 +164,33 @@ func (f *Fake) Count() int {
 	defer f.mu.Unlock()
 	return f.count
 }
+
+// FlushRect records a dirty-rectangle blit (RectFlusher). The Fake keeps no
+// pixels; tests assert the coordinates via LastRect and the count via Rects.
+func (f *Fake) FlushRect(buf []byte, x0, y0, x1, y1 int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastRect = [4]int{x0, y0, x1, y1}
+	f.rects++
+	return nil
+}
+
+// LastRect returns the most recent FlushRect coordinates (zero if none).
+func (f *Fake) LastRect() (x0, y0, x1, y1 int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastRect[0], f.lastRect[1], f.lastRect[2], f.lastRect[3]
+}
+
+// Rects returns the number of FlushRect calls.
+func (f *Fake) Rects() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rects
+}
+
+// Compile-time proof the Fake satisfies both display contracts.
+var (
+	_ Renderer    = (*Fake)(nil)
+	_ RectFlusher = (*Fake)(nil)
+)
