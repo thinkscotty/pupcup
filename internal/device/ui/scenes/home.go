@@ -30,6 +30,13 @@ const (
 	// target it is visually full, so we snap + stop re-baking (residual spring
 	// velocity, which scales with the move amplitude, is imperceptible here).
 	ringSettleEps = 0.01
+	// Selection pop: the avatar springs up from homePopFrom to 1 when the
+	// selected dog changes, so scrolling the rotary reads as a lively swap.
+	homePopOmega = 18.0
+	homePopFrom  = 0.82
+	// homeConfettiDelay staggers the confetti a beat behind the bounce on a
+	// full-meal celebration (bounce reacts, then the burst).
+	homeConfettiDelay = 0.15
 )
 
 // homeAvatarBox is the fixed dirty rectangle the breathing/bouncing/drooping
@@ -59,11 +66,23 @@ type Home struct {
 	confetti *ui.Confetti
 	sparkle  *ui.Sparkle
 	ring     anim.Spring // animated lit-segment count (sweeps when a dog is fed)
+	pop      anim.Spring // selection pop: scales the avatar up on a dog change
 
-	ringMoving  bool    // ring spring still settling → re-bake each frame
-	droopT      float64 // seconds of poor-meal droop remaining
-	confActive  bool    // confetti drew last frame (for the final clearing frame)
-	sparkActive bool
+	ringMoving   bool      // ring spring still settling → re-bake each frame
+	droopT       float64   // seconds of poor-meal droop remaining
+	confettiWait float64   // seconds until the staggered confetti fires (0 = none)
+	confActive   bool      // confetti drew last frame (for the final clearing frame)
+	sparkActive  bool      // sparkle drew last frame
+	selKey       string    // identity of the selected dog, to detect a change
+	lastSig      avatarSig // last flushed avatar signature (idle-breath throttle)
+	haveSig      bool
+}
+
+// avatarSig is the quantized visual state of the avatar. While it is unchanged
+// the breathing avatar needn't be re-flushed — the idle-breath throttle that
+// keeps an at-rest HOME from streaming ~30 near-full frames a second forever.
+type avatarSig struct {
+	r, cy, squashBucket int
 }
 
 // NewHome builds a Home scene sharing th (the engine warms its glyph caches once).
@@ -76,6 +95,7 @@ func NewHome(th *ui.Theme) *Home {
 		confetti: ui.NewConfetti(th),
 		sparkle:  ui.NewSparkle(th),
 		ring:     anim.NewSpring(0, homeRingOmega),
+		pop:      anim.NewSpring(1, homePopOmega),
 	}
 }
 
@@ -94,6 +114,14 @@ func (s *Home) SetModel(m any) {
 		target = float64(hm.Total)
 	}
 	s.ring.SetTarget(target)
+
+	// Pop the avatar when the selected dog changes (rotary scroll). Skipped in
+	// the locked summary, which has no avatar.
+	key := hm.Sel.Dog.Name + "\x00" + hm.Sel.Dog.AccentColor
+	if hm.Mood == MoodIdle && key != s.selKey {
+		s.pop.Pos, s.pop.Vel = homePopFrom, 0
+	}
+	s.selKey = key
 }
 
 // Celebrate plays the in-place reaction for a recorded meal or snack: a squash
@@ -108,7 +136,7 @@ func (s *Home) Celebrate(ev display.CelebrationEvent) {
 		switch ev.Score {
 		case domain.ScoreFull:
 			s.bounce.Trigger(0.45)
-			s.confetti.Trigger(ui.CX, ui.CY)
+			s.confettiWait = homeConfettiDelay // staggered: bounce now, burst a beat later
 		case domain.ScorePartial:
 			s.bounce.Trigger(0.30)
 			s.sparkle.Trigger(ui.CX, ui.CY, homeRingR-10, ui.ColPartial)
@@ -154,8 +182,18 @@ func (s *Home) Update(dt time.Duration) []anim.Rect {
 	breathing := s.m.Mood == MoodIdle
 	if breathing {
 		s.breath.Update(dt)
+		s.pop.Step(secs)
 	}
 	s.bounce.Update(dt)
+
+	// Staggered confetti: fire a beat after the celebration bounce.
+	if s.confettiWait > 0 {
+		s.confettiWait -= secs
+		if s.confettiWait <= 0 {
+			s.confettiWait = 0
+			s.confetti.Trigger(ui.CX, ui.CY)
+		}
+	}
 
 	// Overlays. Include an effect's region for one extra frame after it stops so
 	// the restore erases its last particles.
@@ -167,19 +205,30 @@ func (s *Home) Update(dt time.Duration) []anim.Rect {
 	confDirty := confNow || confDraw
 	sparkDirty := sparkNow || sparkDraw
 
+	var sig avatarSig
+	if breathing {
+		sig = s.avatarSignature()
+	}
+
 	if s.bake || confDirty {
+		if breathing { // the full repaint draws the avatar; sync the throttle
+			s.lastSig, s.haveSig = sig, true
+		}
 		return fullPanel
 	}
 
 	s.dirty = s.dirty[:0]
-	if breathing {
+	// Idle-breath throttle: only re-flush the avatar when it visibly moved
+	// (breath/pop/bounce/droop changed its rounded size, center, or squash).
+	if breathing && (!s.haveSig || sig != s.lastSig) {
+		s.lastSig, s.haveSig = sig, true
 		s.dirty = append(s.dirty, homeAvatarBox)
 	}
 	if sparkDirty {
 		s.dirty = append(s.dirty, homeSparkBox)
 	}
 	if len(s.dirty) == 0 {
-		return nil // locked + nothing animating: hold the last frame
+		return nil // nothing visibly moved: hold the last frame
 	}
 	return s.dirty
 }
@@ -200,14 +249,31 @@ func (s *Home) Draw(ctx *gg.Context, clip []anim.Rect) {
 	s.sparkle.Draw(ctx)
 }
 
-// drawAvatar paints the breathing/bouncing/drooping centerpiece on top of the
-// restored background. It re-applies the time wash each frame so the avatar tracks
-// time-of-day even between static re-bakes.
+// drawAvatar paints the breathing/bouncing/drooping/popping centerpiece on top of
+// the restored background. It re-applies the time wash each frame so the avatar
+// tracks time-of-day even between static re-bakes.
 func (s *Home) drawAvatar(ctx *gg.Context) {
 	s.th.SetTime(s.m.Now)
-	r := int(float64(homeAvatarR) * s.breath.Scale())
-	cy := ui.CY + int(s.droop.Amount()*homeDroopPx)
-	ui.DrawAvatar(ctx, s.th, s.m.Sel.Dog, s.m.Sel.Photo, ui.CX, cy, r, s.bounce.Squash())
+	r, cy, squash := s.avatarParams()
+	ui.DrawAvatar(ctx, s.th, s.m.Sel.Dog, s.m.Sel.Photo, ui.CX, cy, r, squash)
+}
+
+// avatarParams is the avatar's current draw geometry: radius (breath × selection
+// pop), vertical center (droop offset), and squash (bounce). drawAvatar renders
+// from it and avatarSignature quantizes it, so the throttle and the draw agree.
+func (s *Home) avatarParams() (r, cy int, squash float64) {
+	scale := s.breath.Scale() * s.pop.Pos
+	r = int(float64(homeAvatarR) * scale)
+	cy = ui.CY + int(s.droop.Amount()*homeDroopPx)
+	squash = s.bounce.Squash()
+	return
+}
+
+// avatarSignature quantizes avatarParams so sub-pixel breath jitter doesn't force
+// a flush — only an integer size/center change or a perceptible squash step does.
+func (s *Home) avatarSignature() avatarSig {
+	r, cy, squash := s.avatarParams()
+	return avatarSig{r: r, cy: cy, squashBucket: int(math.Round(squash / 0.02))}
 }
 
 // bakeBG re-renders the static layer for the current model and mood.

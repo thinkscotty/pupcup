@@ -193,14 +193,29 @@ func TestGoldenSplash(t *testing.T) {
 
 // --- behavior tests ---------------------------------------------------------
 
-// TestHomeIdleKeepsAnimating: once the ring settles, the idle HOME still reports
-// dirty rectangles every frame (the breathing avatar) so it stays alive.
-func TestHomeIdleKeepsAnimating(t *testing.T) {
+// TestHomeIdleBreathThrottled: the idle HOME stays alive (the breathing avatar
+// flushes periodically) but is throttled — it must NOT flush every frame, which
+// is the whole point of the idle-breath CPU throttle. Over a full breath cycle we
+// expect a handful of flushes, far fewer than the frame count.
+func TestHomeIdleBreathThrottled(t *testing.T) {
 	h := NewHome(testTheme(t))
 	h.SetModel(idleModel())
-	drive(h, settle)
-	if d := h.Update(frame); len(d) == 0 {
-		t.Fatal("idle HOME should keep animating (breath), got no dirty rects")
+	drive(h, settle) // let the ring + selection pop settle
+
+	const window = 240 // ~4s at 60fps, more than one 3.6s breath cycle
+	_, ctx := newCtx()
+	dirtyFrames := 0
+	for i := 0; i < window; i++ {
+		if clip := h.Update(frame); len(clip) > 0 {
+			dirtyFrames++
+			h.Draw(ctx, clip)
+		}
+	}
+	if dirtyFrames == 0 {
+		t.Fatal("idle HOME never flushed; breath should still produce periodic updates")
+	}
+	if dirtyFrames >= window {
+		t.Fatalf("idle HOME flushed every frame (%d/%d); throttle not working", dirtyFrames, window)
 	}
 }
 
@@ -215,15 +230,25 @@ func TestHomeLockedHoldsStill(t *testing.T) {
 	}
 }
 
-// TestHomeCelebrateProducesDirty: a celebration on a settled locked screen wakes
-// it back up (confetti spans the panel).
+// TestHomeCelebrateProducesDirty: a full-meal celebration on a settled locked
+// screen wakes it back up — the confetti is staggered a beat behind the bounce,
+// so it appears within a short window rather than on the very next frame.
 func TestHomeCelebrateProducesDirty(t *testing.T) {
 	h := NewHome(testTheme(t))
 	h.SetModel(lockedModel())
 	drive(h, settle)
 	h.Celebrate(display.CelebrationEvent{Kind: display.CelebrateMeal, Score: domain.ScoreFull})
-	if d := h.Update(frame); len(d) == 0 {
-		t.Fatal("a celebration should produce dirty rectangles")
+
+	_, ctx := newCtx()
+	woke := false
+	for i := 0; i < 30; i++ { // ~0.5s, past the confetti stagger
+		if clip := h.Update(frame); len(clip) > 0 {
+			woke = true
+			h.Draw(ctx, clip)
+		}
+	}
+	if !woke {
+		t.Fatal("a celebration should produce dirty rectangles within ~0.5s")
 	}
 }
 
