@@ -15,14 +15,24 @@ import (
 	"periph.io/x/conn/v3/spi"
 	"periph.io/x/conn/v3/spi/spireg"
 
+	"github.com/scottyturner/pupcup/internal/device/anim"
 	"github.com/scottyturner/pupcup/internal/device/display"
+	"github.com/scottyturner/pupcup/internal/device/ui"
 )
 
-// linuxDev satisfies the scene-rendering contract and the raw bring-up surface.
+// linuxDev satisfies the scene-rendering contract, the raw bring-up surface, and
+// the optional dirty-rect + celebration capabilities the animation engine uses.
 var (
-	_ display.Renderer = (*linuxDev)(nil)
-	_ Prober           = (*linuxDev)(nil)
+	_ display.Renderer    = (*linuxDev)(nil)
+	_ Prober              = (*linuxDev)(nil)
+	_ display.RectFlusher = (*linuxDev)(nil)
+	_ display.Celebrator  = (*linuxDev)(nil)
 )
+
+// animFPS is the engine's render-loop rate. 30 Hz is a deliberate ambient-device
+// default: smooth enough for the celebrations, kinder to the shared core than 60
+// for the near-full-frame idle breath. Tune against on-device CPU in UAT.
+const animFPS = 30
 
 // defaultSpiHz is the SPI clock requested when Config.SpeedHz is 0. On the Pi's
 // auxiliary SPI1 the real clock is core_freq/divisor (core_freq is pinned to
@@ -117,6 +127,16 @@ type linuxDev struct {
 	fb    []byte // 240*240*2 RGB565, reused per flush (no per-frame alloc)
 	maxTx int    // max bytes per Tx (spidev bufsiz)
 	log   *slog.Logger
+
+	// Animation engine. Lazily set up on the first Render so the raw Prober path
+	// (hwprobe FillRGB/DrawTestPattern) never spins it up. All of these are touched
+	// only by the state machine's single run goroutine (Render/Celebrate/Close),
+	// never under mu — the engine owns SPI through FlushRect on its own goroutine.
+	animOnce sync.Once
+	engine   *anim.Engine
+	theme    *ui.Theme
+	scenes   map[sceneKind]anim.AnimatedScene
+	curKind  sceneKind
 }
 
 // initCmd is one entry in the GC9A01 bring-up table: a command byte, its data
@@ -348,14 +368,63 @@ func (d *linuxDev) setPx(x, y int, hi, lo byte) {
 	d.fb[i+1] = lo
 }
 
-// Render composes the scene into a color canvas, copies it into the reusable
-// transmit buffer, and streams it to the panel.
+// Render hands the scene to the animation engine: it swaps the active animated
+// scene (a full-frame repaint) when the scene *kind* changes, otherwise updates
+// the running scene's model in place. The handoff is channel sends only — no SPI,
+// no framebuffer packing on the caller's run loop. If the engine could not be set
+// up (font load failure), or the scene has no animated mapping, it falls back to
+// the static colorFrame path so the panel always shows something.
 func (d *linuxDev) Render(s display.Scene) error {
+	d.animOnce.Do(d.initAnim)
+	if d.engine == nil {
+		return d.renderStatic(s)
+	}
+	kind, model := route(s)
+	if kind == kindNone {
+		return d.renderStatic(s)
+	}
+	if kind != d.curKind {
+		d.engine.SetScene(d.scenes[kind])
+		d.curKind = kind
+	}
+	d.engine.SetModel(model)
+	return nil
+}
+
+// renderStatic composes the scene into a color canvas and streams it as a full
+// frame — the original pre-animation path, kept as the fallback.
+func (d *linuxDev) renderStatic(s display.Scene) error {
 	c := colorFrame(s)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	copy(d.fb, c.pix)
 	return d.flush()
+}
+
+// initAnim builds the theme, the animated scenes, and the engine, then starts it.
+// Run once via animOnce on the first Render. On any setup failure it logs and
+// leaves engine nil, so Render uses the static fallback. Must not hold d.mu — the
+// engine's Start spawns the flush goroutine, which locks d.mu via FlushRect.
+func (d *linuxDev) initAnim() {
+	th, err := ui.NewTheme()
+	if err != nil {
+		d.log.Warn("gc9a01 animation disabled; using static scenes", "err", err)
+		return
+	}
+	d.theme = th
+	d.scenes = newScenes(th)
+	d.engine = anim.New(d, Width, Height, d.log, anim.WithFPS(animFPS))
+	d.engine.Start()
+	d.log.Info("gc9a01 animation engine started", "fps", animFPS)
+}
+
+// Celebrate forwards a one-shot reaction to the active scene via the engine (a
+// non-blocking channel send). No-op until the engine is set up. Implements
+// display.Celebrator.
+func (d *linuxDev) Celebrate(ev display.CelebrationEvent) {
+	if d.engine != nil {
+		d.engine.Celebrate(ev)
+	}
 }
 
 func (d *linuxDev) FillRGB(r, g, b uint8) error {
@@ -404,6 +473,11 @@ func (d *linuxDev) DrawTestPattern() error {
 }
 
 func (d *linuxDev) Close() error {
+	// Stop the engine first so its flush goroutine releases the panel before we
+	// take d.mu to blank it (Close is idempotent; no-op if never started).
+	if d.engine != nil {
+		_ = d.engine.Close()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for i := range d.fb {

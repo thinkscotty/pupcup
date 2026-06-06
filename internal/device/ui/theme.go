@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 	"math"
 	"strconv"
@@ -181,6 +182,24 @@ func ChordHalfWidth(y int) int {
 		return 0
 	}
 	return int(math.Sqrt(d2))
+}
+
+// FormatDuration formats a lock countdown compactly: "H:MMH" for an hour or
+// more, "NM" for whole minutes, else "NS". Mirrors the legacy color-scene
+// formatter so the animated HOME reads the same as the static fallback.
+func FormatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d >= time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%d:%02dH", h, m)
+	}
+	if mins := int(d.Minutes()); mins >= 1 {
+		return fmt.Sprintf("%dM", mins)
+	}
+	return fmt.Sprintf("%dS", int(d.Seconds()))
 }
 
 func lerp(a, b, t float64) float64 { return a + (b-a)*t }

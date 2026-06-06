@@ -463,6 +463,7 @@ func (m *Machine) handleSnackButton(ctx context.Context, ev buttons.ButtonEvent)
 		m.d.Log.Error("record snack", "err", err, "dog", dog.ID)
 		return
 	}
+	m.celebrate(display.CelebrationEvent{DogID: dog.ID, Kind: display.CelebrateSnack})
 	m.mu.Lock()
 	allSnacked := len(m.snackSession) >= len(m.dogs)
 	m.mu.Unlock()
@@ -617,6 +618,10 @@ func (m *Machine) commitPending(ctx context.Context, ts time.Time, tagID *int64)
 		return
 	}
 	m.afterMealCommit(ctx)
+	// Fire the in-place celebration after the post-commit render (advance / lock),
+	// so it layers over whichever HOME state is now showing. A channel send into
+	// the animator — no SPI on the run loop; the OLED ignores it.
+	m.celebrate(display.CelebrationEvent{DogID: p.dogID, Kind: display.CelebrateMeal, Score: p.score})
 }
 
 // afterMealCommit advances to the next un-fed dog and locks if every dog now
@@ -850,6 +855,16 @@ func (m *Machine) findDog(id int64) domain.Dog {
 
 // ----------------------------- rendering ------------------------------------
 
+// celebrate fires a one-shot display reaction (a meal/snack burst) if the display
+// supports it. The GC9A01 animation engine does; the OLED and other renderers
+// simply don't implement Celebrator, so the call no-ops. The implementation is a
+// non-blocking channel send into the animator — never SPI on this run loop.
+func (m *Machine) celebrate(ev display.CelebrationEvent) {
+	if c, ok := m.d.Display.(display.Celebrator); ok {
+		c.Celebrate(ev)
+	}
+}
+
 func (m *Machine) render(ctx context.Context) {
 	m.mu.RLock()
 	mode := m.mode
@@ -879,7 +894,19 @@ func (m *Machine) render(ctx context.Context) {
 		if len(dogs) == 0 {
 			scene = display.SplashScene{Message: "ADD A DOG", Now: now}
 		} else {
-			scene = display.DogSelectorScene{Dog: dogs[sel], Index: sel, Total: len(dogs), Now: now}
+			// Roster carries each dog's session status (in selection order) so the
+			// animated HOME can light its feeding ring (segments = dogs, filled =
+			// dogs fed) and color the rim pips. The static OLED/fallback paths
+			// ignore it.
+			roster := make([]display.SummaryEntry, len(dogs))
+			for i, d := range dogs {
+				roster[i] = display.SummaryEntry{
+					DogName:  d.Name,
+					Score:    mealSession[d.ID],
+					HasSnack: snackSession[d.ID],
+				}
+			}
+			scene = display.DogSelectorScene{Dog: dogs[sel], Index: sel, Total: len(dogs), Now: now, Roster: roster}
 		}
 	case ModeLockedSummary:
 		// Mark any dog that also received a snack since this lock began (the
@@ -924,7 +951,7 @@ func (m *Machine) render(ctx context.Context) {
 		if !idleAt.Before(now) {
 			remaining = idleAt.Sub(now)
 		}
-		scene = display.SnackModeScene{Dog: dog, Remaining: remaining, AlreadyRecorded: already}
+		scene = display.SnackModeScene{Dog: dog, Remaining: remaining, AlreadyRecorded: already, Now: now}
 	case ModeAddInSelect:
 		var dog domain.Dog
 		var score domain.Score
@@ -932,7 +959,7 @@ func (m *Machine) render(ctx context.Context) {
 			dog = pending.dog
 			score = pending.score
 		}
-		scene = display.AddInSelectScene{Dog: dog, Score: score, Choices: addInChoices, Index: addInIndex}
+		scene = display.AddInSelectScene{Dog: dog, Score: score, Choices: addInChoices, Index: addInIndex, Now: now}
 	}
 	if err := m.d.Display.Render(scene); err != nil {
 		m.d.Log.Warn("display render", "err", err)

@@ -1,0 +1,230 @@
+package scenes
+
+import (
+	"math"
+	"time"
+
+	"github.com/fogleman/gg"
+
+	"github.com/scottyturner/pupcup/internal/device/anim"
+	"github.com/scottyturner/pupcup/internal/device/display"
+	"github.com/scottyturner/pupcup/internal/device/ui"
+	"github.com/scottyturner/pupcup/internal/domain"
+)
+
+// Home geometry. The avatar sits in the center inside a feeding ring; rim pips
+// run along the bottom arc. The locked variant swaps the avatar for a filled
+// bowl and a countdown.
+const (
+	homeAvatarR      = 78
+	homeRingR        = float64(ui.SafeRadius - 6) // 100
+	homeRingTh       = 12.0
+	homeRingOmega    = 12.0 // ring-fill spring stiffness (lively, no overshoot)
+	homeDroopPx      = 12.0 // how far a poor-meal mood sinks the avatar
+	homeBowlW        = 128.0
+	homeBowlCY       = ui.CY - 4
+	homeCountdownY   = ui.CY + 64
+	homeAvatarMargin = 26 // dirty-box slack around the avatar for squash + droop + rim
+	homeDroopHold    = 2.0
+	// ringSettleEps: once the ring fill is within this many segments of its
+	// target it is visually full, so we snap + stop re-baking (residual spring
+	// velocity, which scales with the move amplitude, is imperceptible here).
+	ringSettleEps = 0.01
+)
+
+// homeAvatarBox is the fixed dirty rectangle the breathing/bouncing/drooping
+// avatar is redrawn within each idle frame. It comfortably contains the avatar at
+// its largest squash and lowest droop so the overlay never paints outside it.
+var homeAvatarBox = anim.Rect{
+	X0: ui.CX - (homeAvatarR + homeAvatarMargin),
+	Y0: ui.CY - (homeAvatarR + homeAvatarMargin),
+	X1: ui.CX + (homeAvatarR + homeAvatarMargin),
+	Y1: ui.CY + (homeAvatarR + homeAvatarMargin),
+}
+
+// homeSparkBox bounds a sparkle burst (scattered around the ring).
+var homeSparkBox = anim.Rect{X0: 6, Y0: 6, X1: ui.W - 6, Y1: ui.H - 6}
+
+// Home is the ambient "are the dogs fed?" screen. MoodIdle shows the selected
+// dog's avatar breathing inside a feeding ring with the household as rim pips;
+// MoodAllDone shows the locked summary (full ring, filled bowl, countdown). A
+// meal/snack Celebrate plays a bounce + confetti/sparkle in place.
+type Home struct {
+	base
+	m HomeModel
+
+	breath   *ui.IdleBreath
+	bounce   *ui.Bounce
+	droop    *ui.Droop
+	confetti *ui.Confetti
+	sparkle  *ui.Sparkle
+	ring     anim.Spring // animated lit-segment count (sweeps when a dog is fed)
+
+	ringMoving  bool    // ring spring still settling → re-bake each frame
+	droopT      float64 // seconds of poor-meal droop remaining
+	confActive  bool    // confetti drew last frame (for the final clearing frame)
+	sparkActive bool
+}
+
+// NewHome builds a Home scene sharing th (the engine warms its glyph caches once).
+func NewHome(th *ui.Theme) *Home {
+	return &Home{
+		base:     newBase(th),
+		breath:   ui.NewIdleBreath(),
+		bounce:   ui.NewBounce(),
+		droop:    ui.NewDroop(),
+		confetti: ui.NewConfetti(th),
+		sparkle:  ui.NewSparkle(th),
+		ring:     anim.NewSpring(0, homeRingOmega),
+	}
+}
+
+// SetModel swaps in a fresh snapshot, marks the static layer for a re-bake, and
+// retargets the ring-fill spring (so feeding a dog sweeps the ring up by a
+// segment; the locked summary glows fully).
+func (s *Home) SetModel(m any) {
+	hm, ok := m.(HomeModel)
+	if !ok {
+		return
+	}
+	s.m = hm
+	s.bake = true
+	target := float64(hm.Fed)
+	if hm.Mood == MoodAllDone {
+		target = float64(hm.Total)
+	}
+	s.ring.SetTarget(target)
+}
+
+// Celebrate plays the in-place reaction for a recorded meal or snack: a squash
+// bounce always, plus confetti on a full meal, a sparkle on a snack/partial, and
+// a brief droop on a refused meal.
+func (s *Home) Celebrate(ev display.CelebrationEvent) {
+	switch ev.Kind {
+	case display.CelebrateSnack:
+		s.bounce.Trigger(0.28)
+		s.sparkle.Trigger(ui.CX, ui.CY, homeRingR-10, ui.ColSnack)
+	case display.CelebrateMeal:
+		switch ev.Score {
+		case domain.ScoreFull:
+			s.bounce.Trigger(0.45)
+			s.confetti.Trigger(ui.CX, ui.CY)
+		case domain.ScorePartial:
+			s.bounce.Trigger(0.30)
+			s.sparkle.Trigger(ui.CX, ui.CY, homeRingR-10, ui.ColPartial)
+		case domain.ScoreNone:
+			s.bounce.Trigger(0.14)
+			s.droopT = homeDroopHold
+			s.droop.Set(true)
+		default:
+			s.bounce.Trigger(0.25)
+		}
+	}
+}
+
+// Update advances the ring sweep, droop, breath, bounce and overlay bursts, and
+// returns the rectangles that changed: the whole panel when the static layer or a
+// panel-wide burst (confetti) is in play, otherwise just the avatar/sparkle boxes
+// (or nil when the locked screen is at rest).
+func (s *Home) Update(dt time.Duration) []anim.Rect {
+	secs := dt.Seconds()
+
+	// Ring sweep: re-bake while moving, snap + final bake on settle. Gated on
+	// position (not velocity) so a large sweep doesn't linger above the threshold.
+	s.ring.Step(secs)
+	if math.Abs(s.ring.Pos-s.ring.Target) > ringSettleEps {
+		s.bake = true
+		s.ringMoving = true
+	} else if s.ringMoving {
+		s.ring.Pos = s.ring.Target
+		s.bake = true
+		s.ringMoving = false
+	}
+
+	// Droop hold then release.
+	if s.droopT > 0 {
+		s.droopT -= secs
+		if s.droopT <= 0 {
+			s.droopT = 0
+			s.droop.Set(false)
+		}
+	}
+	s.droop.Update(dt)
+
+	breathing := s.m.Mood == MoodIdle
+	if breathing {
+		s.breath.Update(dt)
+	}
+	s.bounce.Update(dt)
+
+	// Overlays. Include an effect's region for one extra frame after it stops so
+	// the restore erases its last particles.
+	confDraw := s.confActive
+	sparkDraw := s.sparkActive
+	confNow := s.confetti.Update(dt)
+	sparkNow := s.sparkle.Update(dt)
+	s.confActive, s.sparkActive = confNow, sparkNow
+	confDirty := confNow || confDraw
+	sparkDirty := sparkNow || sparkDraw
+
+	if s.bake || confDirty {
+		return fullPanel
+	}
+
+	s.dirty = s.dirty[:0]
+	if breathing {
+		s.dirty = append(s.dirty, homeAvatarBox)
+	}
+	if sparkDirty {
+		s.dirty = append(s.dirty, homeSparkBox)
+	}
+	if len(s.dirty) == 0 {
+		return nil // locked + nothing animating: hold the last frame
+	}
+	return s.dirty
+}
+
+// Draw re-bakes the static layer if needed, restores it under the dirty clip, then
+// composites the moving overlays.
+func (s *Home) Draw(ctx *gg.Context, clip []anim.Rect) {
+	if s.bake {
+		s.bakeBG()
+		s.bake = false
+	}
+	s.restore(ctx, clip)
+
+	if s.m.Mood == MoodIdle {
+		s.drawAvatar(ctx)
+	}
+	s.confetti.Draw(ctx)
+	s.sparkle.Draw(ctx)
+}
+
+// drawAvatar paints the breathing/bouncing/drooping centerpiece on top of the
+// restored background. It re-applies the time wash each frame so the avatar tracks
+// time-of-day even between static re-bakes.
+func (s *Home) drawAvatar(ctx *gg.Context) {
+	s.th.SetTime(s.m.Now)
+	r := int(float64(homeAvatarR) * s.breath.Scale())
+	cy := ui.CY + int(s.droop.Amount()*homeDroopPx)
+	ui.DrawAvatar(ctx, s.th, s.m.Sel.Dog, s.m.Sel.Photo, ui.CX, cy, r, s.bounce.Squash())
+}
+
+// bakeBG re-renders the static layer for the current model and mood.
+func (s *Home) bakeBG() {
+	s.th.SetTime(s.m.Now)
+	s.clearBG()
+
+	switch s.m.Mood {
+	case MoodAllDone:
+		ui.DrawFeedingRing(s.bgg, s.th, ui.CX, ui.CY, homeRingR, homeRingTh, s.m.Total, s.ring.Pos, ui.ColFull)
+		ui.DrawRimPips(s.bgg, s.th, s.m.Pips, -1)
+		ui.DrawBowl(s.bgg, s.th, ui.CX, homeBowlCY, homeBowlW, 1.0, ui.ColFull)
+		if s.m.Countdown > 0 {
+			s.th.Small.DrawCentered(s.bgg, "UNLOCK "+ui.FormatDuration(s.m.Countdown), ui.CX, homeCountdownY, s.th.C(ui.ColDim))
+		}
+	default: // MoodIdle — the avatar is an overlay, so the static layer is ring + pips
+		ui.DrawFeedingRing(s.bgg, s.th, ui.CX, ui.CY, homeRingR, homeRingTh, s.m.Total, s.ring.Pos, ui.ColFull)
+		ui.DrawRimPips(s.bgg, s.th, s.m.Pips, s.m.Selected)
+	}
+}

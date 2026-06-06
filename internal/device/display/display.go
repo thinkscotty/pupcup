@@ -21,11 +21,17 @@ type Scene interface{ isScene() }
 
 // DogSelectorScene shows the currently selected dog and the position
 // indicator (Index of Total, 1-based).
+//
+// Roster carries every dog's current meal-session status (in selection order,
+// so Roster[Index] is the selected dog) for the animated HOME screen's feeding
+// ring and rim pips. It is additive: the static OLED + fallback color paths use
+// only Dog/Index/Total and ignore it, so a nil Roster renders the legacy view.
 type DogSelectorScene struct {
-	Dog   domain.Dog
-	Index int
-	Total int
-	Now   time.Time
+	Dog    domain.Dog
+	Index  int
+	Total  int
+	Now    time.Time
+	Roster []SummaryEntry
 }
 
 func (DogSelectorScene) isScene() {}
@@ -52,6 +58,7 @@ type SnackModeScene struct {
 	Dog             domain.Dog
 	Remaining       time.Duration
 	AlreadyRecorded []int64 // dog IDs that received a snack this session
+	Now             time.Time
 }
 
 func (SnackModeScene) isScene() {}
@@ -73,6 +80,7 @@ type AddInSelectScene struct {
 	Score   domain.Score
 	Choices []AddInChoice
 	Index   int
+	Now     time.Time
 }
 
 func (AddInSelectScene) isScene() {}
@@ -123,6 +131,16 @@ type CelebrationEvent struct {
 	Score domain.Score
 }
 
+// Celebrator is an optional capability a Renderer may also implement to play a
+// one-shot reaction when a feeding or snack is recorded. The state machine
+// type-asserts for it after committing, so this stays additive: renderers that
+// don't animate (the OLED) simply don't implement it and the call no-ops.
+// Celebrate must not block — the GC9A01 implementation is a channel send onto the
+// animation engine, never SPI on the caller's goroutine.
+type Celebrator interface {
+	Celebrate(ev CelebrationEvent)
+}
+
 // ErrUnavailable is returned by hardware constructors on platforms without the
 // underlying bus (I2C/SPI).
 var ErrUnavailable = errors.New("display: hardware unavailable on this platform")
@@ -139,6 +157,7 @@ type Fake struct {
 	count    int
 	lastRect [4]int
 	rects    int
+	celebs   []CelebrationEvent
 }
 
 func (f *Fake) Render(s Scene) error {
@@ -189,8 +208,24 @@ func (f *Fake) Rects() int {
 	return f.rects
 }
 
-// Compile-time proof the Fake satisfies both display contracts.
+// Celebrate records a one-shot celebration (Celebrator). Tests assert the state
+// machine fires the right events via Celebrations.
+func (f *Fake) Celebrate(ev CelebrationEvent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.celebs = append(f.celebs, ev)
+}
+
+// Celebrations returns a copy of the celebrations fired so far.
+func (f *Fake) Celebrations() []CelebrationEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]CelebrationEvent(nil), f.celebs...)
+}
+
+// Compile-time proof the Fake satisfies every optional display contract.
 var (
 	_ Renderer    = (*Fake)(nil)
 	_ RectFlusher = (*Fake)(nil)
+	_ Celebrator  = (*Fake)(nil)
 )
