@@ -38,14 +38,17 @@ func DrawRimPips(ctx *gg.Context, th *Theme, pips []Pip, selected int) {
 		arc = maxArc
 	}
 	sixOClock := math.Pi / 2
-	start := sixOClock - arc/2
+	// Lay dogs left→right in order (pip 0 on the left). The rotary advances the
+	// selection on a clockwise turn, so the highlight must travel rightward to
+	// match the knob; sweeping the angle down from 6 o'clock+arc/2 does that.
+	start := sixOClock + arc/2
 	step := 0.0
 	if n > 1 {
 		step = arc / float64(n-1)
 	}
 
 	for i, p := range pips {
-		a := start + step*float64(i)
+		a := start - step*float64(i)
 		x := CX + rimR*math.Cos(a)
 		y := CY + rimR*math.Sin(a)
 		col := th.Wash().Apply(p.Col)
