@@ -3,6 +3,7 @@ package scenes
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"log/slog"
@@ -149,12 +150,44 @@ func lockedModel() HomeModel {
 	}
 }
 
+// testPhoto is a recognizable non-flat stand-in for a dog photo (four colored
+// quadrants), so a golden makes it obvious the photo path — not the accent disc —
+// rendered, and that the circular crop landed.
+func testPhoto(n int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, n, n))
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			c := color.RGBA{235, 200, 70, 255} // bottom-right
+			switch {
+			case x < n/2 && y < n/2:
+				c = color.RGBA{230, 70, 70, 255} // top-left
+			case x >= n/2 && y < n/2:
+				c = color.RGBA{70, 200, 110, 255} // top-right
+			case x < n/2 && y >= n/2:
+				c = color.RGBA{80, 130, 240, 255} // bottom-left
+			}
+			img.SetRGBA(x, y, c)
+		}
+	}
+	return img
+}
+
 // --- golden tests -----------------------------------------------------------
 
 func TestGoldenHomeIdle(t *testing.T) {
 	h := NewHome(testTheme(t))
 	h.SetModel(idleModel())
 	checkGolden(t, "home_idle", drive(h, settle))
+}
+
+// TestGoldenHomeIdlePhoto is the idle HOME with a real photo: the avatar shows the
+// circular-cropped image instead of the accent disc + initial.
+func TestGoldenHomeIdlePhoto(t *testing.T) {
+	h := NewHome(testTheme(t))
+	m := idleModel()
+	m.Sel.Photo = testPhoto(168)
+	h.SetModel(m)
+	checkGolden(t, "home_idle_photo", drive(h, settle))
 }
 
 func TestGoldenHomeLocked(t *testing.T) {

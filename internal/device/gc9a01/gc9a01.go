@@ -30,6 +30,7 @@ type Config struct {
 	RSTPin   int    // reset (BCM)
 	SpeedHz  int    // SPI clock in Hz; 0 uses the driver default (40 MHz)
 	Rotation int    // screen rotation in degrees clockwise: 0/90/180/270 (0 = standard mount)
+	PhotoDir string // dir holding dog photos (dog-<id>.jpg|png); empty disables avatar photos
 }
 
 // New returns a display.Renderer (see *_linux.go / *_stub.go), so the daemon

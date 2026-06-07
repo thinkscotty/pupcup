@@ -126,6 +126,7 @@ func run() error {
 			DCPin:    cfg.LCDDCPin,
 			RSTPin:   cfg.LCDRSTPin,
 			Rotation: cfg.LCDRotation,
+			PhotoDir: cfg.PhotoDir,
 		}, log)
 	case "oled":
 		disp, err = oled.New(oled.Config{I2CBus: uint8(cfg.I2CBus), Addr: cfg.OLEDAddr}, log)

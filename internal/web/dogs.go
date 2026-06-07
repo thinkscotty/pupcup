@@ -35,9 +35,11 @@ func validHexColor(s string) bool { return hexColorRe.MatchString(s) }
 
 type dogsData struct {
 	baseData
-	Dogs    []dogManageView
-	Palette []swatch
-	Flash   *flash
+	Dogs       []dogManageView
+	Palette    []swatch
+	Flash      *flash
+	PhotoMaxPx int // surfaced so the upload hint matches the validated limit
+	PhotoMaxKB int
 }
 
 type dogManageView struct {
@@ -78,7 +80,13 @@ func (s *Server) handleDogsIndex(w http.ResponseWriter, r *http.Request) {
 		counts = map[int64]int{}
 	}
 
-	data := dogsData{baseData: s.base("dogs"), Palette: accentPalette(), Flash: readFlash(r)}
+	data := dogsData{
+		baseData:   s.base("dogs"),
+		Palette:    accentPalette(),
+		Flash:      readFlash(r),
+		PhotoMaxPx: s.photoMaxPx,
+		PhotoMaxKB: s.photoMaxKB,
+	}
 	for _, d := range dogs {
 		n := counts[d.ID]
 		data.Dogs = append(data.Dogs, dogManageView{

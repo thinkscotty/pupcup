@@ -1,6 +1,7 @@
 package gc9a01
 
 import (
+	"image"
 	"testing"
 	"time"
 
@@ -121,5 +122,37 @@ func TestRouteAddIn(t *testing.T) {
 	}
 	if len(am.Choices) != 2 || am.Choices[0] != "Chicken" || am.Choices[1] != "Other" {
 		t.Errorf("choices = %v", am.Choices)
+	}
+}
+
+// fakePhotos is a photoProvider that hands back a fixed image for any dog.
+type fakePhotos struct{ img *image.RGBA }
+
+func (f fakePhotos) Photo(domain.Dog) *image.RGBA { return f.img }
+
+// TestWithPhotos checks the photo is injected only where the selected dog's
+// avatar is drawn (idle HOME, snack), skipped for the locked summary (a bowl, no
+// avatar), and that a nil provider is a no-op.
+func TestWithPhotos(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	pp := fakePhotos{img: img}
+
+	idle := scenes.HomeModel{Mood: scenes.MoodIdle, Sel: scenes.DogStat{Dog: domain.Dog{Name: "Rex"}}}
+	if got := withPhotos(idle, pp).(scenes.HomeModel); got.Sel.Photo != img {
+		t.Error("idle HOME should receive the photo")
+	}
+
+	locked := scenes.HomeModel{Mood: scenes.MoodAllDone, Sel: scenes.DogStat{Dog: domain.Dog{Name: "Rex"}}}
+	if got := withPhotos(locked, pp).(scenes.HomeModel); got.Sel.Photo != nil {
+		t.Error("locked summary has no avatar; photo should stay nil")
+	}
+
+	snack := scenes.SnackModel{Dog: scenes.DogStat{Dog: domain.Dog{Name: "Rex"}}}
+	if got := withPhotos(snack, pp).(scenes.SnackModel); got.Dog.Photo != img {
+		t.Error("snack should receive the photo")
+	}
+
+	if got := withPhotos(idle, nil).(scenes.HomeModel); got.Sel.Photo != nil {
+		t.Error("nil provider should be a no-op")
 	}
 }

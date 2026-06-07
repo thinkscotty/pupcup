@@ -18,6 +18,7 @@
     <label class="field">
       <span>Photo <span class="muted">(optional, JPEG/PNG)</span></span>
       <input type="file" name="photo" accept="image/jpeg,image/png">
+      {{template "photohint" .}}
     </label>
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">Add dog</button>
@@ -62,6 +63,7 @@
             <label class="field">
               <span>Replace photo <span class="muted">(JPEG/PNG)</span></span>
               <input type="file" name="photo" accept="image/jpeg,image/png">
+              {{template "photohint" $}}
             </label>
             {{if .HasPhoto}}
             <label class="field-check">
@@ -101,3 +103,5 @@
   {{range .}}<span class="palette-dot" style="background: {{.Hex}}" title="{{.Name}} {{.Hex}}"></span>{{end}}
 </div>
 {{end}}
+
+{{define "photohint"}}<small class="muted photo-hint">Shown as a circle on the device &mdash; cropped to a centered square, so center your dog. Max {{.PhotoMaxPx}}&times;{{.PhotoMaxPx}}&nbsp;px, {{.PhotoMaxKB}}&nbsp;KB.</small>{{end}}

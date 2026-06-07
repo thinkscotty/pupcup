@@ -17,6 +17,7 @@ import (
 
 	"github.com/scottyturner/pupcup/internal/device/anim"
 	"github.com/scottyturner/pupcup/internal/device/display"
+	"github.com/scottyturner/pupcup/internal/device/photocache"
 	"github.com/scottyturner/pupcup/internal/device/ui"
 )
 
@@ -33,6 +34,11 @@ var (
 // default: smooth enough for the celebrations, kinder to the shared core than 60
 // for the near-full-frame idle breath. Tune against on-device CPU in UAT.
 const animFPS = 30
+
+// photoPx is the side length of the cached square avatar photo. It must cover the
+// avatar at its largest drawn radius (home: 78 × ~1.025 breath × pop ≈ 80), so
+// 168 (half = 84) leaves margin; ui.DrawAvatar clips this square to the disc.
+const photoPx = 168
 
 // defaultSpiHz is the SPI clock requested when Config.SpeedHz is 0. On the Pi's
 // auxiliary SPI1 the real clock is core_freq/divisor (core_freq is pinned to
@@ -80,14 +86,15 @@ func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 	}
 
 	d := &linuxDev{
-		port:  port,
-		conn:  conn,
-		dc:    dc,
-		rst:   rst,
-		fb:    make([]byte, Width*Height*2),
-		maxTx: Width * Height * 2,
-		log:   log,
-		rot:   rot,
+		port:   port,
+		conn:   conn,
+		dc:     dc,
+		rst:    rst,
+		fb:     make([]byte, Width*Height*2),
+		maxTx:  Width * Height * 2,
+		log:    log,
+		rot:    rot,
+		photos: photocache.New(cfg.PhotoDir, photoPx, log),
 	}
 	// The kernel spidev driver rejects a single Tx larger than its bufsiz
 	// (commonly 4096); flush() chunks the framebuffer to fit this limit.
@@ -125,15 +132,16 @@ func outPin(num int) (gpio.PinIO, error) {
 }
 
 type linuxDev struct {
-	mu    sync.Mutex
-	port  spi.PortCloser
-	conn  spi.Conn
-	dc    gpio.PinIO
-	rst   gpio.PinIO
-	fb    []byte // 240*240*2 RGB565, reused per flush (no per-frame alloc)
-	maxTx int    // max bytes per Tx (spidev bufsiz)
-	log   *slog.Logger
-	rot   display.Rotation // screen rotation applied at the flush boundary (set once in New)
+	mu     sync.Mutex
+	port   spi.PortCloser
+	conn   spi.Conn
+	dc     gpio.PinIO
+	rst    gpio.PinIO
+	fb     []byte // 240*240*2 RGB565, reused per flush (no per-frame alloc)
+	maxTx  int    // max bytes per Tx (spidev bufsiz)
+	log    *slog.Logger
+	rot    display.Rotation  // screen rotation applied at the flush boundary (set once in New)
+	photos *photocache.Cache // dog-photo → avatar image; read only on the render run loop
 
 	// Animation engine. Lazily set up on the first Render so the raw Prober path
 	// (hwprobe FillRGB/DrawTestPattern) never spins it up. All of these are touched
@@ -390,6 +398,7 @@ func (d *linuxDev) Render(s display.Scene) error {
 	if kind == kindNone {
 		return d.renderStatic(s)
 	}
+	model = withPhotos(model, d.photos) // attach the selected dog's photo (cache lookup, no SPI)
 	if kind != d.curKind {
 		d.engine.SetScene(d.scenes[kind])
 		d.curKind = kind

@@ -1,10 +1,13 @@
 package gc9a01
 
 import (
+	"image"
+
 	"github.com/scottyturner/pupcup/internal/device/anim"
 	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/ui"
 	"github.com/scottyturner/pupcup/internal/device/ui/scenes"
+	"github.com/scottyturner/pupcup/internal/domain"
 )
 
 // sceneKind identifies which AnimatedScene a display.Scene maps to. Several
@@ -44,6 +47,37 @@ func route(s display.Scene) (sceneKind, any) {
 		return kindSplash, scenes.SplashModel{Message: sc.Message, Now: sc.Now}
 	default:
 		return kindNone, nil
+	}
+}
+
+// photoProvider supplies a dog's decoded, circle-ready avatar photo (nil when the
+// dog has no usable photo). *photocache.Cache satisfies it; tests use a fake. It
+// lives here so the pure injection step stays decoupled from the (linux-only)
+// cache that does the file I/O.
+type photoProvider interface {
+	Photo(dog domain.Dog) *image.RGBA
+}
+
+// withPhotos fills in the avatar photo on a routed scene model from pp, leaving
+// everything else untouched. It runs after route() and before the engine sees the
+// model, so route() stays pure and photo loading stays out of the model mapping.
+// Only scenes that draw the selected dog's avatar get a photo: idle HOME and
+// snack. A nil provider (photos disabled) or any other model passes through.
+func withPhotos(model any, pp photoProvider) any {
+	if pp == nil {
+		return model
+	}
+	switch m := model.(type) {
+	case scenes.HomeModel:
+		if m.Mood == scenes.MoodIdle { // MoodAllDone shows a bowl, no avatar
+			m.Sel.Photo = pp.Photo(m.Sel.Dog)
+		}
+		return m
+	case scenes.SnackModel:
+		m.Dog.Photo = pp.Photo(m.Dog.Dog)
+		return m
+	default:
+		return model
 	}
 }
 
