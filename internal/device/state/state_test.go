@@ -194,20 +194,28 @@ func TestMealButtons_RecordAndAdvance(t *testing.T) {
 		scoreByDog[dogs[2].ID] != domain.ScoreNone {
 		t.Fatalf("scores: %+v", scoreByDog)
 	}
-	// LED bar shows per-dog meal quality: Cleo full=green [0,1], spacer [2],
+	// LED bar (per-dog quality). LEDs render on the animator's own goroutine now,
+	// not synchronously here, so inspect the latest intent the run loop handed it
+	// and assert the base frame it will paint: Cleo full=green [0,1], spacer [2],
 	// Rio partial=yellow [3,4], spacer [5], Pip none=red [6,7].
-	last := h.leds.LastFrame()
-	if last == nil {
-		t.Fatalf("no LED frame rendered")
+	var in ledIntent
+	select {
+	case in = <-h.m.leds.intent:
+	default:
+		t.Fatal("no LED intent sent to the animator")
 	}
+	if in.mode != ModeLockedSummary {
+		t.Fatalf("LED intent mode = %v, want locked", in.mode)
+	}
+	base := ledBaseFrame(in.mode, in.scores, 8)
 	want := []neopixel.Color{
 		ledFull, ledFull, neopixel.ColorOff,
 		ledPartial, ledPartial, neopixel.ColorOff,
 		ledNone, ledNone,
 	}
 	for i := range want {
-		if last[i] != want[i] {
-			t.Fatalf("LED[%d] = %+v, want %+v (full frame %+v)", i, last[i], want[i], last)
+		if base[i] != want[i] {
+			t.Fatalf("LED base[%d] = %+v, want %+v (full %+v)", i, base[i], want[i], base)
 		}
 	}
 	// OLED summary scene.

@@ -31,6 +31,7 @@ import (
 	"github.com/scottyturner/pupcup/internal/device/display"
 	"github.com/scottyturner/pupcup/internal/device/neopixel"
 	"github.com/scottyturner/pupcup/internal/device/rotary"
+	"github.com/scottyturner/pupcup/internal/device/ui"
 	"github.com/scottyturner/pupcup/internal/domain"
 	"github.com/scottyturner/pupcup/internal/eventbus"
 	"github.com/scottyturner/pupcup/internal/store"
@@ -132,6 +133,11 @@ type Machine struct {
 	// to reload the dog list. Reloading on the run goroutine — rather than from
 	// the caller's — keeps all display/LED rendering single-threaded.
 	refresh chan struct{}
+
+	// leds renders the NeoPixel bar on its own goroutine (sole SPI0 owner). The
+	// run loop hands it intent snapshots + celebrations; it never calls the strip
+	// directly. Started in Run, stopped on Run's return.
+	leds *ledAnimator
 }
 
 // pendingFeeding is an in-memory meal opened on a meal-button press, awaiting
@@ -170,6 +176,7 @@ func New(d Deps) (*Machine, error) {
 		snackSession: map[int64]bool{},
 		held:         map[domain.ButtonColor]bool{},
 		refresh:      make(chan struct{}, 1),
+		leds:         newLedAnimator(d.LEDs, d.Log, ledFPS),
 	}, nil
 }
 
@@ -200,6 +207,11 @@ func (m *Machine) SelectedDog() domain.Dog {
 // Run blocks until ctx is canceled. It reads from the hardware event channels
 // and drives the display, LEDs, store, and bus.
 func (m *Machine) Run(ctx context.Context) error {
+	// The LED animator owns the strip on its own goroutine for the device's
+	// lifetime; stop it (blanking the bar) when the run loop exits.
+	m.leds.start()
+	defer m.leds.stop()
+
 	if err := m.bootstrap(ctx); err != nil {
 		return err
 	}
@@ -863,6 +875,7 @@ func (m *Machine) celebrate(ev display.CelebrationEvent) {
 	if c, ok := m.d.Display.(display.Celebrator); ok {
 		c.Celebrate(ev)
 	}
+	m.leds.celebrate(ev) // flash the bar too (across-the-room channel)
 }
 
 func (m *Machine) render(ctx context.Context) {
@@ -965,43 +978,16 @@ func (m *Machine) render(ctx context.Context) {
 		m.d.Log.Warn("display render", "err", err)
 	}
 
-	// LEDs: the locked summary shows each dog's meal quality as a colored
-	// segment across the bar (see summaryFrame); snack mode is a gentle blue
-	// pulse; the add-in picker is steady amber; everything else is dark.
-	frame := make([]neopixel.Color, m.d.LEDs.N())
-	switch mode {
-	case ModeLockedSummary:
-		scores := make([]neopixel.Color, len(dogs))
-		for i, d := range dogs {
-			scores[i] = scoreColor(mealSession[d.ID])
-		}
-		if seg := summaryFrame(len(frame), scores); seg != nil {
-			frame = seg
-		} else {
-			// 4+ dogs (or a bar that isn't 8 pixels): no defined segment
-			// layout, so fall back to the original solid green = "fed".
-			fillFrame(frame, ledFull)
-		}
-	case ModeSnackMode:
-		// Crude pulse via second-resolution oscillation; refined animator can replace.
-		if now.Second()%2 == 0 {
-			fillFrame(frame, neopixel.Color{B: 24})
-		} else {
-			fillFrame(frame, neopixel.Color{B: 8})
-		}
-	case ModeAddInSelect:
-		// Steady amber while the add-in picker is open.
-		fillFrame(frame, neopixel.Color{R: 28, G: 16})
+	// LEDs: hand the animator a fresh intent snapshot; it owns the strip and all
+	// motion (per-dog status, breathing glow, celebration bursts, night-dim) on
+	// its own goroutine, so smooth pulses don't hinge on this once-a-second render
+	// and SPI0 stays single-threaded. scores drive both the idle progress bar
+	// (fills as dogs are fed) and the locked summary.
+	scores := make([]neopixel.Color, len(dogs))
+	for i, d := range dogs {
+		scores[i] = scoreColor(mealSession[d.ID])
 	}
-	for i, c := range frame {
-		if err := m.d.LEDs.SetPixel(i, c); err != nil {
-			m.d.Log.Warn("led setpixel", "i", i, "err", err)
-			break
-		}
-	}
-	if err := m.d.LEDs.Show(); err != nil {
-		m.d.Log.Warn("led show", "err", err)
-	}
+	m.leds.setIntent(ledIntent{mode: mode, scores: scores, dim: ui.WashFor(now).Dim})
 }
 
 // LED colors for the locked meal summary, tuned dim to sit alongside the
