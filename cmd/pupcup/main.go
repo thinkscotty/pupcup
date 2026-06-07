@@ -122,9 +122,10 @@ func run() error {
 	switch cfg.Display {
 	case "gc9a01":
 		disp, err = gc9a01.New(gc9a01.Config{
-			Device: cfg.LCDSPIDevice,
-			DCPin:  cfg.LCDDCPin,
-			RSTPin: cfg.LCDRSTPin,
+			Device:   cfg.LCDSPIDevice,
+			DCPin:    cfg.LCDDCPin,
+			RSTPin:   cfg.LCDRSTPin,
+			Rotation: cfg.LCDRotation,
 		}, log)
 	case "oled":
 		disp, err = oled.New(oled.Config{I2CBus: uint8(cfg.I2CBus), Addr: cfg.OLEDAddr}, log)

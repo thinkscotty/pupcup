@@ -102,3 +102,19 @@ func TestValidate_LCDPinCollisionRejected(t *testing.T) {
 		t.Fatalf("expected duplicate pin error, got %v", err)
 	}
 }
+
+func TestValidate_LCDRotation(t *testing.T) {
+	for _, deg := range []int{0, 90, 180, 270} {
+		cfg := Default()
+		cfg.LCDRotation = deg
+		if err := cfg.validate(); err != nil {
+			t.Errorf("lcd_rotation %d should be valid: %v", deg, err)
+		}
+	}
+	cfg := Default()
+	cfg.LCDRotation = 45
+	err := cfg.validate()
+	if err == nil || !strings.Contains(err.Error(), "lcd_rotation") {
+		t.Fatalf("expected lcd_rotation error, got %v", err)
+	}
+}

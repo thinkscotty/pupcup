@@ -25,10 +25,11 @@ const (
 // the two plain GPIO lines the driver toggles directly (DC and RST). CS is
 // the kernel-asserted SPI chip-select and is not listed here.
 type Config struct {
-	Device  string // e.g. /dev/spidev1.0
-	DCPin   int    // data/command select (BCM)
-	RSTPin  int    // reset (BCM)
-	SpeedHz int    // SPI clock in Hz; 0 uses the driver default (40 MHz)
+	Device   string // e.g. /dev/spidev1.0
+	DCPin    int    // data/command select (BCM)
+	RSTPin   int    // reset (BCM)
+	SpeedHz  int    // SPI clock in Hz; 0 uses the driver default (40 MHz)
+	Rotation int    // screen rotation in degrees clockwise: 0/90/180/270 (0 = standard mount)
 }
 
 // New returns a display.Renderer (see *_linux.go / *_stub.go), so the daemon

@@ -29,6 +29,7 @@ type Config struct {
 	LCDSPIDevice  string     `yaml:"lcd_spi_device" env:"LCD_SPI_DEVICE"` // GC9A01 on SPI1
 	LCDDCPin      int        `yaml:"lcd_dc_pin" env:"LCD_DC_PIN"`         // data/command select (BCM)
 	LCDRSTPin     int        `yaml:"lcd_rst_pin" env:"LCD_RST_PIN"`       // reset (BCM)
+	LCDRotation   int        `yaml:"lcd_rotation" env:"LCD_ROTATION"`     // GC9A01 screen rotation, degrees clockwise: 0/90/180/270
 	NeopixelCount int        `yaml:"neopixel_count" env:"NEOPIXEL_COUNT"`
 	ButtonPins    ButtonPins `yaml:"button_pins"`
 	RotaryPins    RotaryPins `yaml:"rotary_pins"`
@@ -255,6 +256,11 @@ func (c *Config) validate() error {
 	case "gc9a01":
 		if c.LCDSPIDevice == "" {
 			errs = append(errs, "lcd_spi_device is required when display is gc9a01")
+		}
+		switch c.LCDRotation {
+		case 0, 90, 180, 270:
+		default:
+			errs = append(errs, fmt.Sprintf("lcd_rotation %d must be 0, 90, 180, or 270", c.LCDRotation))
 		}
 		pins["lcd_dc_pin"] = c.LCDDCPin
 		pins["lcd_rst_pin"] = c.LCDRSTPin

@@ -74,6 +74,11 @@ func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 		return nil, fmt.Errorf("gc9a01: connect: %w", err)
 	}
 
+	rot, ok := display.RotationFromDegrees(cfg.Rotation)
+	if !ok {
+		log.Warn("gc9a01: invalid rotation, using 0", "rotation", cfg.Rotation)
+	}
+
 	d := &linuxDev{
 		port:  port,
 		conn:  conn,
@@ -82,6 +87,7 @@ func New(cfg Config, log *slog.Logger) (display.Renderer, error) {
 		fb:    make([]byte, Width*Height*2),
 		maxTx: Width * Height * 2,
 		log:   log,
+		rot:   rot,
 	}
 	// The kernel spidev driver rejects a single Tx larger than its bufsiz
 	// (commonly 4096); flush() chunks the framebuffer to fit this limit.
@@ -127,6 +133,7 @@ type linuxDev struct {
 	fb    []byte // 240*240*2 RGB565, reused per flush (no per-frame alloc)
 	maxTx int    // max bytes per Tx (spidev bufsiz)
 	log   *slog.Logger
+	rot   display.Rotation // screen rotation applied at the flush boundary (set once in New)
 
 	// Animation engine. Lazily set up on the first Render so the raw Prober path
 	// (hwprobe FillRGB/DrawTestPattern) never spins it up. All of these are touched
@@ -397,7 +404,13 @@ func (d *linuxDev) renderStatic(s display.Scene) error {
 	c := colorFrame(s)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	copy(d.fb, c.pix)
+	if d.rot == display.Rot0 {
+		copy(d.fb, c.pix)
+	} else {
+		// flush() always writes the full panel window, which is correct under any
+		// rotation; only the pixel order needs turning.
+		display.RotateRGB565(d.fb, c.pix, Width, 0, 0, Width, Height, d.rot)
+	}
 	return d.flush()
 }
 
@@ -413,9 +426,12 @@ func (d *linuxDev) initAnim() {
 	}
 	d.theme = th
 	d.scenes = newScenes(th)
-	d.engine = anim.New(d, Width, Height, d.log, anim.WithFPS(animFPS))
+	// Rotate every blit at the flush boundary so scenes keep drawing upright; for
+	// Rot0 this returns d unchanged (no overhead). Width == Height (square panel).
+	flusher := display.NewRotatedFlusher(d, Width, d.rot)
+	d.engine = anim.New(flusher, Width, Height, d.log, anim.WithFPS(animFPS))
 	d.engine.Start()
-	d.log.Info("gc9a01 animation engine started", "fps", animFPS)
+	d.log.Info("gc9a01 animation engine started", "fps", animFPS, "rotation", d.rot)
 }
 
 // Celebrate forwards a one-shot reaction to the active scene via the engine (a

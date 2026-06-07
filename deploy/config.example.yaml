@@ -33,6 +33,9 @@ neopixel_count: 8                          # SK6812 stick length
 lcd_spi_device: "/dev/spidev1.0"
 lcd_dc_pin: 25                             # data/command select (BCM)
 lcd_rst_pin: 24                            # reset (BCM)
+lcd_rotation: 0                            # screen rotation, degrees CW: 0/90/180/270 (set per how the
+                                           # panel sits in the case; this build's case needs 90 — flip
+                                           # to 270 if it comes out the wrong way). Colors are unaffected.
 
 # SSD1306 OLED on I2C (used when display: oled). The default GC9A01 build uses
 # no I2C at all, so these are ignored there.
