@@ -113,6 +113,8 @@ func (a *ledAnimator) run() {
 		return
 	}
 	frame := make([]neopixel.Color, n)
+	prev := make([]neopixel.Color, n)
+	wrote := false
 	ticker := time.NewTicker(time.Second / time.Duration(a.fps))
 	defer ticker.Stop()
 
@@ -153,9 +155,28 @@ func (a *ledAnimator) run() {
 				}
 			}
 			renderLEDFrame(frame, cur, phase, burst, burstCol)
-			a.write(frame)
+			// Skip the SPI write when the bar is unchanged (idle-dark, steady
+			// amber): a glow/burst/dim in motion always differs, so live states
+			// still stream at full rate.
+			if !wrote || !framesEqual(frame, prev) {
+				a.write(frame)
+				copy(prev, frame)
+				wrote = true
+			}
 		}
 	}
+}
+
+func framesEqual(a, b []neopixel.Color) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *ledAnimator) write(frame []neopixel.Color) {
